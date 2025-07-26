@@ -329,10 +329,12 @@ def calculate_comprehensive_analytics(df, relief_rate=320.47):
         
         for status in all_statuses:
             status_data = subject_data[subject_data['Status_Canonical'] == status]
-            stats[f"{status}_count"] = len(status_data)
-            stats[f"{status}_minutes"] = status_data['Relief Minutes'].sum()
-            stats[f"{status}_dollars"] = status_data['Relief_Dollars'].sum()
-            stats[f"{status}_pct"] = (len(status_data) / len(subject_data) * 100) if len(subject_data) > 0 else 0
+            # Use safe key format - replace spaces with underscores
+            safe_status = status.replace(' ', '_').replace('-', '_')
+            stats[f"{safe_status}_count"] = len(status_data)
+            stats[f"{safe_status}_minutes"] = status_data['Relief Minutes'].sum()
+            stats[f"{safe_status}_dollars"] = status_data['Relief_Dollars'].sum()
+            stats[f"{safe_status}_pct"] = (len(status_data) / len(subject_data) * 100) if len(subject_data) > 0 else 0
             
         subject_stats[subject] = stats
     
@@ -724,9 +726,11 @@ def show_analytics_tab():
     for subject, stats in subject_stats.items():
         row = [subject, stats["count"]]
         for status in all_statuses:
-            count = stats.get(f"{status}_count", 0)
-            dollars = stats.get(f"{status}_dollars", 0)
-            pct = stats.get(f"{status}_pct", 0)
+            # Use safe key format
+            safe_status = status.replace(' ', '_').replace('-', '_')
+            count = stats.get(f"{safe_status}_count", 0)
+            dollars = stats.get(f"{safe_status}_dollars", 0)
+            pct = stats.get(f"{safe_status}_pct", 0)
             row.extend([count, f"${dollars:,.0f}", f"{pct:.1f}%"])
         breakdown_data.append(row)
     
@@ -860,7 +864,7 @@ def show_analytics_tab():
     with col2:
         # Find most active pilot and highest value subject
         most_active = employee_stats.sort_values('Total_Claims', ascending=False).index[0] if len(employee_stats) > 0 else 'N/A'
-        highest_value_subject = max(subject_stats.items(), key=lambda x: sum([x[1].get(f"{s}_dollars", 0) for s in all_statuses]))[0] if subject_stats else 'N/A'
+        highest_value_subject = max(subject_stats.items(), key=lambda x: sum([x[1].get(f"{s.replace(' ', '_').replace('-', '_')}_dollars", 0) for s in all_statuses]))[0] if subject_stats else 'N/A'
         
         st.success(f"""
         **🎯 Key Insights:**
@@ -912,9 +916,9 @@ def show_financial_tab():
     # Create financial summary
     financial_summary = []
     for subject, stats in subject_stats.items():
-        total_dollars = sum([stats.get(f"{status}_dollars", 0) for status in all_statuses])
+        total_dollars = sum([stats.get(f"{status.replace(' ', '_').replace('-', '_')}_dollars", 0) for status in all_statuses])
         approved_dollars = stats.get("approved_dollars", 0)
-        pending_dollars = stats.get("open_dollars", 0) + stats.get("in review_dollars", 0)
+        pending_dollars = stats.get("open_dollars", 0) + stats.get("in_review_dollars", 0)
         denied_dollars = stats.get("denied_dollars", 0)
         
         financial_summary.append({
@@ -969,7 +973,8 @@ def show_financial_tab():
     for subject, stats in subject_stats.items():
         row = {'Subject': subject}
         for status in all_statuses:
-            dollars = stats.get(f"{status}_dollars", 0)
+            safe_status = status.replace(' ', '_').replace('-', '_')
+            dollars = stats.get(f"{safe_status}_dollars", 0)
             row[f"{status.title()}"] = f"${dollars:,.0f}"
         detailed_financial.append(row)
     
@@ -983,34 +988,60 @@ def show_financial_tab():
     total_projected_approvals = 0
     total_projected_value = 0
     
+    # Debug information
+    st.write("**Debug Info:**")
+    debug_info = []
+    
     for subject, stats in subject_stats.items():
         approved = stats.get("approved_count", 0)
         denied = stats.get("denied_count", 0)
         total_decided = approved + denied
-        probability = approved / total_decided if total_decided > 0 else 0
         
+        # Fix: Use safe key format for status names
         open_cases = stats.get("open_count", 0)
-        in_review_cases = stats.get("in review_count", 0)
+        in_review_cases = stats.get("in_review_count", 0)  # Now uses underscore
         pending_cases = open_cases + in_review_cases
         
-        if pending_cases > 0 and approved > 0:
-            avg_approved_value = stats.get("approved_dollars", 0) / approved
-            estimated_approvals = probability * pending_cases
-            estimated_value = estimated_approvals * avg_approved_value
-            
-            total_projected_approvals += estimated_approvals
-            total_projected_value += estimated_value
-            
-            projections.append({
-                'Subject': subject,
-                'Pending Cases': pending_cases,
-                'Historical Approval Rate': f"{probability:.1%}",
-                'Estimated Approvals': f"{estimated_approvals:.1f}",
-                'Avg Approved Value': f"${avg_approved_value:,.0f}",
-                'Projected Value': f"${estimated_value:,.0f}"
-            })
+        # Calculate probability with minimum threshold
+        probability = approved / total_decided if total_decided >= 3 else 0  # Need at least 3 decided cases
+        
+        debug_info.append({
+            'Subject': subject,
+            'Approved': approved,
+            'Denied': denied,
+            'Open': open_cases,
+            'In Review': in_review_cases,
+            'Pending Total': pending_cases,
+            'Probability': f"{probability:.1%}" if probability > 0 else "N/A"
+        })
+        
+        # More lenient conditions for projections
+        if pending_cases > 0 and total_decided >= 2:  # At least 2 decided cases
+            # Calculate average approved value more safely
+            approved_dollars = stats.get("approved_dollars", 0)
+            if approved > 0 and approved_dollars > 0:
+                avg_approved_value = approved_dollars / approved
+                estimated_approvals = probability * pending_cases
+                estimated_value = estimated_approvals * avg_approved_value
+                
+                total_projected_approvals += estimated_approvals
+                total_projected_value += estimated_value
+                
+                projections.append({
+                    'Subject': subject,
+                    'Pending Cases': pending_cases,
+                    'Historical Approval Rate': f"{probability:.1%}",
+                    'Estimated Approvals': f"{estimated_approvals:.1f}",
+                    'Avg Approved Value': f"${avg_approved_value:,.0f}",
+                    'Projected Value': f"${estimated_value:,.0f}"
+                })
+    
+    # Show debug information
+    debug_df = pd.DataFrame(debug_info)
+    st.dataframe(debug_df, use_container_width=True)
     
     if projections:
+        st.success(f"✅ Found {len(projections)} subjects with projection data")
         projection_df = pd.DataFrame(projections)
         st.dataframe(projection_df, use_container_width=True)
         
@@ -1023,6 +1054,16 @@ def show_financial_tab():
         with col3:
             current_approval_rate = len(enhanced_df[enhanced_df['Status_Canonical'] == 'approved']) / len(enhanced_df) * 100
             st.metric("📈 Overall Approval Rate", f"{current_approval_rate:.1f}%")
+    else:
+        st.warning("⚠️ No projection data available. This could be because:")
+        st.write("• No pending cases (open or in review status)")
+        st.write("• Insufficient historical data (need at least 2 decided cases per subject)")
+        st.write("• No approved cases with dollar values to calculate averages")
+        
+        # Show what we have
+        total_pending = sum(item['Pending Total'] for item in debug_info)
+        total_decided = sum(item['Approved'] + item['Denied'] for item in debug_info)
+        st.info(f"**Current Data:** {total_pending} pending cases, {total_decided} decided cases total")
     
     # === EXPORT OPTIONS ===
     st.subheader("📥 Export Financial Data")
@@ -1360,8 +1401,8 @@ def export_data():
     summary_data = []
     for subject, stats in subject_stats.items():
         # Calculate total dollars and hours from all statuses
-        total_dollars = sum([stats.get(f"{status}_dollars", 0) for status in all_statuses])
-        total_minutes = sum([stats.get(f"{status}_minutes", 0) for status in all_statuses])
+        total_dollars = sum([stats.get(f"{status.replace(' ', '_').replace('-', '_')}_dollars", 0) for status in all_statuses])
+        total_minutes = sum([stats.get(f"{status.replace(' ', '_').replace('-', '_')}_minutes", 0) for status in all_statuses])
         total_hours = total_minutes / 60
         
         summary_data.append({
@@ -1371,7 +1412,7 @@ def export_data():
             'Total_Dollars': total_dollars,
             'Approved_Count': stats.get('approved_count', 0),
             'Denied_Count': stats.get('denied_count', 0),
-            'Pending_Count': stats.get('open_count', 0) + stats.get('in review_count', 0),
+            'Pending_Count': stats.get('open_count', 0) + stats.get('in_review_count', 0),
             'Approval_Rate': stats.get('approved_count', 0) / max(stats.get('approved_count', 0) + stats.get('denied_count', 0), 1)
         })
     
