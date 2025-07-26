@@ -295,6 +295,16 @@ def calculate_comprehensive_analytics(df, relief_rate=320.47):
                 'statuses': pilot_cases['Status_Canonical'].unique().tolist()
             }
     
+    # ===== TOTAL RELIEF REQUESTED BY SUBJECT (FROM ORIGINAL SCRIPT) =====
+    # Calculate total relief by subject group in hours and percentages
+    subject_relief_totals = df.groupby('Subject_Grouped')['Relief_Dollars'].sum().to_dict()
+    total_relief_all = df['Relief_Dollars'].sum()
+    subject_relief_hours = {k: v / relief_rate for k, v in subject_relief_totals.items()}  # Convert to hours
+    subject_relief_percentages = {k: (v / total_relief_all * 100) if total_relief_all > 0 else 0 for k, v in subject_relief_totals.items()}
+    
+    # Sort by relief amount
+    subject_relief_sorted = sorted(subject_relief_hours.items(), key=lambda x: x[1], reverse=True)
+    
     # ===== VIOLATION TYPE ANALYSIS (FROM ORIGINAL SCRIPT) =====
     violation_counter = df['subject'].value_counts().to_dict()
     total_cases = len(df)
@@ -353,6 +363,12 @@ def calculate_comprehensive_analytics(df, relief_rate=320.47):
         'oldest_5_cases': oldest_5_cases,
         'unique_violation_types': len(violation_counter),
         'top_10_pilots_by_cases': dict(pilot_counts.head(10)),
+        # TOTAL RELIEF REQUESTED BY SUBJECT ANALYTICS (from original script)
+        'subject_relief_totals': subject_relief_totals,
+        'subject_relief_hours': subject_relief_hours,
+        'subject_relief_percentages': subject_relief_percentages,
+        'subject_relief_sorted': subject_relief_sorted,
+        'total_relief_all_subjects': total_relief_all,
         # Summary statistics
         'total_claims': len(df),
         'total_relief': df['Relief_Dollars'].sum(),
@@ -782,7 +798,12 @@ def show_overview_tab():
         return
     
     try:
-        analytics = calculate_comprehensive_analytics(df)
+        # Get relief rate from session state
+        relief_rate = st.session_state.get('relief_rate', 320.47)
+        analytics = calculate_comprehensive_analytics(df, relief_rate)
+        
+        # Configuration info
+        st.info(f"💰 **Current Relief Rate:** ${relief_rate:.2f}/hour")
         
         # Key metrics
         col1, col2, col3, col4 = st.columns(4)
@@ -873,6 +894,46 @@ def show_overview_tab():
                                labels={'Cases': 'Number of Cases', 'Relief': 'Total Relief ($)'})
                 st.plotly_chart(fig, use_container_width=True)
         
+        # ===== TOTAL RELIEF REQUESTED BY SUBJECT OVERVIEW =====
+        st.subheader("💰 Total Relief Requested by Subject - Overview")
+        if analytics.get('subject_relief_sorted'):
+            # Show top 10 subjects in overview
+            top_subjects_data = []
+            for subject, hours in analytics['subject_relief_sorted'][:10]:  # Top 10
+                percentage = analytics['subject_relief_percentages'].get(subject, 0)
+                dollar_value = analytics['subject_relief_totals'].get(subject, 0)
+                top_subjects_data.append({
+                    'Subject': subject,
+                    'Hours': round(hours, 2),
+                    'Dollar Value': dollar_value,
+                    '% of Total': round(percentage, 2)
+                })
+            
+            subjects_df = pd.DataFrame(top_subjects_data)
+            
+            col1, col2 = st.columns([1, 1])
+            with col1:
+                # Format for display
+                display_df = subjects_df.copy()
+                display_df['Dollar Value'] = display_df['Dollar Value'].apply(lambda x: f"${x:,.2f}")
+                display_df['% of Total'] = display_df['% of Total'].apply(lambda x: f"{x}%")
+                st.dataframe(display_df, use_container_width=True)
+            with col2:
+                # Pie chart of top 8 subjects
+                fig = px.pie(subjects_df.head(8), values='Hours', names='Subject',
+                           title="Relief Hours Distribution (Top 8 Subjects)")
+                st.plotly_chart(fig, use_container_width=True)
+            
+            # Total relief summary
+            total_relief_hours = sum(analytics['subject_relief_hours'].values())
+            total_relief_value = analytics.get('total_relief_all_subjects', 0)
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                st.metric("🕒 **Total Relief Hours (All Subjects)**", f"{total_relief_hours:,.1f} hours")
+            with col2:
+                st.metric("💰 **Total Relief Value (All Subjects)**", f"${total_relief_value:,.2f}")
+        
     except Exception as e:
         st.error(f"Error displaying overview: {str(e)}")
 
@@ -886,7 +947,9 @@ def show_analytics_tab():
         return
     
     try:
-        analytics = calculate_comprehensive_analytics(df)
+        # Get relief rate from session state
+        relief_rate = st.session_state.get('relief_rate', 320.47)
+        analytics = calculate_comprehensive_analytics(df, relief_rate)
         
         # Top 20 highest value claims
         st.subheader("🏆 Top 20 Highest Value Claims")
@@ -943,6 +1006,36 @@ def show_analytics_tab():
                     else:
                         st.info(f"No data available for {status} status")
         
+        # ===== TOTAL RELIEF REQUESTED BY SUBJECT (FROM ORIGINAL SCRIPT) =====
+        st.subheader("💰 Total Relief Requested by Subject (Hours & Percentages)")
+        if analytics.get('subject_relief_sorted'):
+            relief_subject_data = []
+            for subject, hours in analytics['subject_relief_sorted']:
+                percentage = analytics['subject_relief_percentages'].get(subject, 0)
+                relief_subject_data.append({
+                    'Subject': subject,
+                    'Hours': round(hours, 2),
+                    'Percentage of Total': f"{percentage:.2f}%",
+                    'Dollar Value': f"${analytics['subject_relief_totals'].get(subject, 0):,.2f}"
+                })
+            
+            relief_subject_df = pd.DataFrame(relief_subject_data)
+            
+            col1, col2 = st.columns([2, 1])
+            with col1:
+                st.dataframe(relief_subject_df, use_container_width=True)
+            with col2:
+                # Chart showing top subjects by relief hours
+                top_subjects = relief_subject_df.head(8)
+                fig = px.pie(top_subjects, values='Hours', names='Subject',
+                           title="Relief Distribution by Subject (Top 8)")
+                st.plotly_chart(fig, use_container_width=True)
+            
+            # Total relief metric
+            total_relief_hours = sum(analytics['subject_relief_hours'].values())
+            st.metric("**Total Relief Requested (All Subjects)**", f"{total_relief_hours:,.1f} hours", 
+                     f"${analytics.get('total_relief_all_subjects', 0):,.2f}")
+        
         # ===== VIOLATION TYPE ANALYSIS =====
         st.subheader("⚖️ Violation Type Analysis")
         if analytics.get('violation_counter'):
@@ -986,29 +1079,153 @@ def show_analytics_tab():
             st.metric("Total Cases", analytics.get('total_claims', 0))
             st.plotly_chart(fig, use_container_width=True)
         
-        # Subject analysis
-        st.subheader("📋 Subject Violation Analysis")
+        # Subject analysis - Enhanced to match original script
+        st.subheader("📋 Complete Subject Violation Breakdown (All Statuses)")
         if analytics['subject_stats']:
+            # Get all statuses for column headers
+            all_statuses = analytics.get('all_statuses', [])
+            
+            # Create comprehensive subject breakdown
             subject_summary = []
             for subject, stats in analytics['subject_stats'].items():
-                subject_summary.append({
+                row = {
                     'Subject': subject,
                     'Total Cases': stats['count'],
                     'Total Relief ($)': stats['minutes'],
-                    'Approved Cases': stats.get('approved_count', 0),
-                    'Denied Cases': stats.get('denied_count', 0),
-                    'Approval Rate (%)': round(stats.get('approved_pct', 0), 1)
-                })
+                    '% of Total Cases': round((stats['count'] / analytics.get('total_claims', 1)) * 100, 2)
+                }
+                
+                # Add counts for each status
+                for status in all_statuses:
+                    safe_status = status.replace(' ', '_').replace('-', '_')
+                    status_count = stats.get(f"{safe_status}_count", 0)
+                    row[f"{status.title()} Cases"] = status_count
+                
+                # Add probability and approval metrics
+                approved = stats.get('approved_count', 0)
+                denied = stats.get('denied_count', 0)
+                total_decided = approved + denied
+                approval_rate = (approved / total_decided * 100) if total_decided > 0 else 0
+                row['Approval Rate (%)'] = round(approval_rate, 1)
+                
+                subject_summary.append(row)
             
             subject_df = pd.DataFrame(subject_summary)
             subject_df = subject_df.sort_values('Total Relief ($)', ascending=False)
-            st.dataframe(subject_df, use_container_width=True)
             
-            # Subject distribution chart
-            fig = px.bar(subject_df.head(10), x='Subject', y='Total Relief ($)',
-                        title="Top 10 Subjects by Total Relief Value")
-            fig.update_xaxes(tickangle=45)
-            st.plotly_chart(fig, use_container_width=True)
+            # Display comprehensive table
+            st.dataframe(subject_df, use_container_width=True, height=400)
+            
+            # Create two visualizations side by side
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                # Subject distribution by relief value chart
+                fig1 = px.bar(subject_df.head(10), x='Subject', y='Total Relief ($)',
+                            title="Top 10 Subjects by Total Relief Value")
+                fig1.update_xaxes(tickangle=45)
+                st.plotly_chart(fig1, use_container_width=True)
+            
+            with col2:
+                # Subject distribution by case count
+                fig2 = px.bar(subject_df.head(10), x='Subject', y='Total Cases',
+                            title="Top 10 Subjects by Case Count")
+                fig2.update_xaxes(tickangle=45)
+                st.plotly_chart(fig2, use_container_width=True)
+        
+        # ===== PROBABILITY OF PAYMENT BY SUBJECT (FROM ORIGINAL SCRIPT) =====
+        st.subheader("📊 Probability of Payment by Subject")
+        if analytics.get('probability_by_subject'):
+            prob_data = []
+            for subject, probability in analytics['probability_by_subject'].items():
+                # Get the stats for this subject to show context
+                subject_stats = analytics['subject_stats'].get(subject, {})
+                approved = subject_stats.get('approved_count', 0)
+                denied = subject_stats.get('denied_count', 0)
+                total_decided = approved + denied
+                
+                prob_data.append({
+                    'Subject': subject,
+                    'Probability of Payment': f"{probability:.2%}",
+                    'Probability (Decimal)': probability,
+                    'Approved Cases': approved,
+                    'Denied Cases': denied,
+                    'Total Decided Cases': total_decided,
+                    'Estimated Future Approvals': round(probability * (subject_stats.get('open_count', 0) + subject_stats.get('in_review_count', 0)), 2)
+                })
+            
+            prob_df = pd.DataFrame(prob_data)
+            prob_df = prob_df.sort_values('Probability (Decimal)', ascending=False)
+            
+            col1, col2 = st.columns([1, 1])
+            with col1:
+                # Display probability table (exclude decimal column for clean display)
+                display_prob_df = prob_df.drop('Probability (Decimal)', axis=1)
+                st.dataframe(display_prob_df, use_container_width=True, height=400)
+            
+            with col2:
+                # Probability visualization
+                fig = px.bar(prob_df.head(10), x='Probability (Decimal)', y='Subject',
+                           title="Probability of Payment by Subject (Top 10)", orientation='h',
+                           hover_data=['Approved Cases', 'Denied Cases'])
+                fig.update_layout(height=400)
+                fig.update_xaxes(title="Probability of Payment", tickformat=".0%")
+                st.plotly_chart(fig, use_container_width=True)
+            
+            # Summary statistics for probabilities
+            avg_probability = prob_df['Probability (Decimal)'].mean()
+            median_probability = prob_df['Probability (Decimal)'].median()
+            
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("Average Probability", f"{avg_probability:.1%}")
+            with col2:
+                st.metric("Median Probability", f"{median_probability:.1%}")
+            with col3:
+                highest_prob_subject = prob_df.iloc[0]['Subject'] if len(prob_df) > 0 else "N/A"
+                highest_prob_value = prob_df.iloc[0]['Probability (Decimal)'] if len(prob_df) > 0 else 0
+                st.metric("Highest Probability Subject", f"{highest_prob_subject}", f"{highest_prob_value:.1%}")
+        
+        # ===== ESTIMATED APPROVALS FROM OPEN & IN REVIEW CASES =====
+        st.subheader("🔮 Estimated Future Approvals (Based on Probability)")
+        if analytics.get('probability_by_subject') and analytics.get('subject_stats'):
+            future_approvals = []
+            total_estimated = 0
+            
+            for subject, probability in analytics['probability_by_subject'].items():
+                subject_stats = analytics['subject_stats'].get(subject, {})
+                open_cases = subject_stats.get('open_count', 0)
+                in_review_cases = subject_stats.get('in_review_count', 0)
+                unresolved = open_cases + in_review_cases
+                estimated = probability * unresolved
+                total_estimated += estimated
+                
+                if unresolved > 0:  # Only show subjects with unresolved cases
+                    future_approvals.append({
+                        'Subject': subject,
+                        'Open Cases': open_cases,
+                        'In Review Cases': in_review_cases,
+                        'Total Unresolved': unresolved,
+                        'Probability': f"{probability:.1%}",
+                        'Estimated Approvals': round(estimated, 2)
+                    })
+            
+            if future_approvals:
+                future_df = pd.DataFrame(future_approvals)
+                future_df = future_df.sort_values('Estimated Approvals', ascending=False)
+                
+                col1, col2 = st.columns([2, 1])
+                with col1:
+                    st.dataframe(future_df, use_container_width=True)
+                with col2:
+                    st.metric("**Total Estimated Future Approvals**", f"{total_estimated:.1f} cases")
+                    
+                    # Chart of top estimated approvals
+                    if len(future_df) > 0:
+                        fig = px.bar(future_df.head(8), x='Estimated Approvals', y='Subject',
+                                   title="Top 8 Subjects by Estimated Future Approvals", orientation='h')
+                        fig.update_layout(height=300)
+                        st.plotly_chart(fig, use_container_width=True)
         
         # Outlier analysis
         if analytics.get('outlier_analysis') and analytics['outlier_analysis'].get('high_cost_outliers'):
@@ -1141,8 +1358,13 @@ def show_financial_tab():
         return
     
     try:
-        analytics = calculate_comprehensive_analytics(df)
+        # Get relief rate from session state
+        relief_rate = st.session_state.get('relief_rate', 320.47)
+        analytics = calculate_comprehensive_analytics(df, relief_rate)
         cost_data = analytics.get('cost_analytics', {})
+        
+        # Display current relief rate being used
+        st.info(f"💰 **Using Relief Rate:** ${relief_rate:.2f}/hour for all cost calculations")
         
         if not cost_data:
             st.error("Cost analytics data not available.")
@@ -1179,6 +1401,50 @@ def show_financial_tab():
         with col4:
             variance_pct = cost_data.get('variance_percentage', 0)
             st.metric("Variance %", f"{variance_pct:.1f}%")
+        
+        # ===== TOTAL RELIEF REQUESTED BY SUBJECT - FINANCIAL VIEW =====
+        st.subheader("💰 Total Relief Requested by Subject (Financial Breakdown)")
+        if analytics.get('subject_relief_sorted'):
+            relief_financial_data = []
+            for subject, hours in analytics['subject_relief_sorted']:
+                dollar_value = analytics['subject_relief_totals'].get(subject, 0)
+                percentage = analytics['subject_relief_percentages'].get(subject, 0)
+                relief_financial_data.append({
+                    'Subject': subject,
+                    'Relief Hours': round(hours, 2),
+                    'Dollar Value': dollar_value,
+                    'Percentage of Total Relief': percentage
+                })
+            
+            relief_financial_df = pd.DataFrame(relief_financial_data)
+            
+            col1, col2 = st.columns([2, 1])
+            with col1:
+                # Format the DataFrame for better display
+                display_df = relief_financial_df.copy()
+                display_df['Dollar Value'] = display_df['Dollar Value'].apply(lambda x: f"${x:,.2f}")
+                display_df['Percentage of Total Relief'] = display_df['Percentage of Total Relief'].apply(lambda x: f"{x:.2f}%")
+                st.dataframe(display_df, use_container_width=True)
+            with col2:
+                # Top 8 subjects by dollar value chart
+                top_subjects = relief_financial_df.head(8)
+                fig = px.bar(top_subjects, x='Dollar Value', y='Subject',
+                           title="Top 8 Subjects by Relief Value", orientation='h')
+                fig.update_layout(height=350)
+                st.plotly_chart(fig, use_container_width=True)
+            
+            # Summary metrics for relief by subject
+            total_relief_value = analytics.get('total_relief_all_subjects', 0)
+            total_relief_hours = sum(analytics['subject_relief_hours'].values())
+            st.metrics_container = st.container()
+            with st.metrics_container:
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.metric("Total Relief Value (All Subjects)", f"${total_relief_value:,.2f}")
+                with col2:
+                    st.metric("Total Relief Hours (All Subjects)", f"{total_relief_hours:,.1f} hrs")
+                with col3:
+                    st.metric("Average Relief per Hour", f"${relief_rate:.2f}/hr")
         
         # Top pilots by cost
         if cost_data.get('top_pilots_by_cost'):
@@ -1753,6 +2019,60 @@ def main():
             st.info("📊 **Demo Mode Active**\n\nUsing sample data for demonstration.")
         else:
             st.info("🔴 **Production Mode**\n\nReady for live data collection.")
+        
+        st.divider()
+        
+        # Relief Rate Configuration
+        st.header("⚙️ Configuration")
+        
+        # Initialize relief rate in session state if not exists
+        if 'relief_rate' not in st.session_state:
+            st.session_state.relief_rate = 320.47
+        
+        relief_rate = st.number_input(
+            "💰 Relief Rate ($/hour)",
+            min_value=100.0,
+            max_value=1000.0,
+            value=st.session_state.relief_rate,
+            step=0.01,
+            format="%.2f",
+            help="Average composite rate of pay per hour used for cost calculations"
+        )
+        
+        # Preset relief rate buttons
+        st.write("**Quick Presets:**")
+        preset_col1, preset_col2, preset_col3 = st.columns(3)
+        
+        with preset_col1:
+            if st.button("Standard\n$320.47", use_container_width=True):
+                st.session_state.relief_rate = 320.47
+                st.rerun()
+        
+        with preset_col2:
+            if st.button("High Rate\n$400.00", use_container_width=True):
+                st.session_state.relief_rate = 400.00
+                st.rerun()
+        
+        with preset_col3:
+            if st.button("Conservative\n$275.00", use_container_width=True):
+                st.session_state.relief_rate = 275.00
+                st.rerun()
+        
+        # Update session state when value changes
+        if relief_rate != st.session_state.relief_rate:
+            st.session_state.relief_rate = relief_rate
+            st.success(f"Relief rate updated to ${relief_rate:.2f}/hour")
+        
+        # Reset button for relief rate
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("🔄 Reset to Default", help="Reset to $320.47/hour"):
+                st.session_state.relief_rate = 320.47
+                st.rerun()
+        
+        with col2:
+            # Display current configuration
+            st.markdown(f"**Current:** ${relief_rate:.2f}/hr")
         
         st.divider()
         
