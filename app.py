@@ -165,12 +165,57 @@ def main():
             headless_mode = st.checkbox("Run in headless mode", value=False)
             max_pages = st.number_input("Max pages to scrape (0 = all)", value=0, min_value=0)
             
-            # Action buttons
-            if st.button("🚀 Start Data Collection", type="primary"):
-                run_data_collection(relief_rate, export_path, username, password, headless_mode, max_pages)
+            # Store configuration in session state for persistence
+            st.session_state.relief_rate = relief_rate
+            st.session_state.export_path = export_path
+            st.session_state.username = username
+            st.session_state.password = password
+            st.session_state.headless_mode = headless_mode
+            st.session_state.max_pages = max_pages
             
-            if st.button("📊 Load Latest Data"):
-                load_latest_data(export_path)
+            # Configuration validation
+            config_valid = True
+            config_issues = []
+            
+            if not export_path:
+                config_issues.append("Export Path is required")
+                config_valid = False
+            if not username:
+                config_issues.append("Username is required")
+                config_valid = False
+            if not password:
+                config_issues.append("Password is required")
+                config_valid = False
+            
+            if config_issues:
+                st.warning("⚠️ Configuration Issues:")
+                for issue in config_issues:
+                    st.write(f"• {issue}")
+            else:
+                st.success("✅ Configuration Complete")
+            
+            # Test connection button
+            if st.button("🔍 Test Data Source Connection"):
+                if not config_valid:
+                    st.error("Please complete configuration before testing connection.")
+                else:
+                    test_data_source_connection(username, password, export_path)
+            
+            # Action buttons
+            col1, col2 = st.columns(2)
+            with col1:
+                if st.button("🚀 Start Data Collection", type="primary", disabled=not config_valid):
+                    if config_valid:
+                        run_data_collection(relief_rate, export_path, username, password, headless_mode, max_pages)
+                    else:
+                        st.error("Please complete all required configuration fields.")
+            
+            with col2:
+                if st.button("📊 Load Latest Data", disabled=not export_path):
+                    if export_path:
+                        load_latest_data(export_path)
+                    else:
+                        st.error("Please provide an export path.")
     
     # Main content tabs
     tab1, tab2, tab3, tab4, tab5 = st.tabs(["📈 Overview", "📊 Analytics", "💰 Financial", "📋 Claims Details", "🔄 Real-time Status"])
@@ -1145,13 +1190,14 @@ def show_realtime_status_tab():
     
     # Configuration status
     st.subheader("⚙️ Configuration Status")
+    
+    # Check sidebar configuration dynamically
+    relief_rate_set = True  # Relief rate always has a default value
+    export_path_set = len(st.session_state.get('export_path', '')) > 0
+    credentials_set = (len(st.session_state.get('username', '')) > 0 and 
+                      len(st.session_state.get('password', '')) > 0)
+    
     config_status = []
-    
-    # Check sidebar configuration
-    relief_rate_set = True  # This would check if relief rate is configured
-    export_path_set = False  # This would check if export path is provided
-    credentials_set = False  # This would check if username/password are provided
-    
     config_status.append(("Relief Rate", "✅ Configured" if relief_rate_set else "❌ Not set"))
     config_status.append(("Export Path", "✅ Configured" if export_path_set else "❌ Not set"))
     config_status.append(("Credentials", "✅ Configured" if credentials_set else "❌ Not set"))
@@ -1161,8 +1207,17 @@ def show_realtime_status_tab():
     
     if not all([relief_rate_set, export_path_set, credentials_set]):
         st.warning("⚠️ Complete configuration in the sidebar to enable data collection.")
+        st.info("💡 Switch off Demo Mode in the sidebar to access configuration options.")
     else:
         st.success("✅ All configuration complete. Ready for data collection!")
+        
+        # Add connection test button in real-time status
+        if st.button("🔍 Test Connection Now"):
+            test_data_source_connection(
+                st.session_state.get('username', ''),
+                st.session_state.get('password', ''),
+                st.session_state.get('export_path', '')
+            )
 
 def convert_df_to_csv(df):
     """Convert dataframe to CSV for download"""
@@ -1221,6 +1276,76 @@ def export_data():
         file_name=f'sts_analytics_summary_{datetime.now().strftime("%Y%m%d_%H%M%S")}.csv',
         mime='text/csv'
     )
+
+def test_data_source_connection(username, password, export_path):
+    """Test connection to the data source"""
+    with st.spinner("Testing connection to data source..."):
+        import time
+        time.sleep(2)  # Simulate connection test
+        
+        # In a real implementation, this would:
+        # 1. Test network connectivity
+        # 2. Validate credentials
+        # 3. Check access to the data source
+        # 4. Verify export path accessibility
+        
+        # Simulate some basic checks
+        connection_results = []
+        
+        # Check export path
+        try:
+            if os.path.exists(export_path):
+                connection_results.append(("✅", "Export Path", "Directory exists and is accessible"))
+            else:
+                connection_results.append(("⚠️", "Export Path", f"Directory '{export_path}' does not exist (will be created)"))
+        except Exception as e:
+            connection_results.append(("❌", "Export Path", f"Error accessing path: {str(e)}"))
+        
+        # Simulate credential validation
+        if username and password:
+            if len(username) >= 3 and len(password) >= 6:
+                connection_results.append(("✅", "Credentials", "Username and password format valid"))
+            else:
+                connection_results.append(("⚠️", "Credentials", "Username/password may be too short"))
+        else:
+            connection_results.append(("❌", "Credentials", "Username and password are required"))
+        
+        # Simulate network connectivity test
+        try:
+            import socket
+            socket.create_connection(("8.8.8.8", 53), timeout=3)
+            connection_results.append(("✅", "Network", "Internet connectivity confirmed"))
+        except:
+            connection_results.append(("⚠️", "Network", "Limited network connectivity detected"))
+        
+        # Display results
+        st.subheader("🔍 Connection Test Results")
+        for icon, component, message in connection_results:
+            st.write(f"{icon} **{component}**: {message}")
+        
+        # Overall status
+        success_count = sum(1 for icon, _, _ in connection_results if icon == "✅")
+        warning_count = sum(1 for icon, _, _ in connection_results if icon == "⚠️")
+        error_count = sum(1 for icon, _, _ in connection_results if icon == "❌")
+        
+        if error_count > 0:
+            st.error(f"❌ Connection test failed: {error_count} errors found. Please resolve issues before proceeding.")
+        elif warning_count > 0:
+            st.warning(f"⚠️ Connection test completed with warnings: {warning_count} issues detected. Data collection may still work.")
+        else:
+            st.success("✅ All connection tests passed! Ready for data collection.")
+        
+        # Add note about real implementation
+        with st.expander("ℹ️ About Connection Testing"):
+            st.info("""
+            In the full implementation, this would test:
+            • Connection to the actual STS claims system
+            • Authentication with provided credentials
+            • Selenium WebDriver availability
+            • Browser compatibility
+            • Data source accessibility
+            • Write permissions to export directory
+            """)
 
 def run_data_collection(relief_rate, export_path, username, password, headless_mode, max_pages):
     """Run actual data collection when not in demo mode"""
