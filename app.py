@@ -1186,7 +1186,23 @@ def show_analytics_tab():
             st.metric("% Cases from Multi-Case Employees", f"{analytics.get('percentage_multiple_cases', 0):.1f}%")
         with col4:
             st.metric("Total Cases", analytics.get('total_claims', 0))
-            st.plotly_chart(fig, use_container_width=True)
+        
+        # ===== TOP 10 PILOTS BY CASE COUNT =====
+        if analytics.get('top_10_pilots_by_cases'):
+            st.subheader("🔟 Top 10 Pilots by Number of Cases Submitted")
+            top10_pilots_df = pd.DataFrame([
+                {'Rank': i+1, 'Pilot Employee #': pilot, 'Case Count': count}
+                for i, (pilot, count) in enumerate(analytics['top_10_pilots_by_cases'].items())
+            ])
+            
+            col1, col2 = st.columns([1, 1])
+            with col1:
+                st.dataframe(top10_pilots_df, use_container_width=True)
+            with col2:
+                fig = px.bar(top10_pilots_df, x='Pilot Employee #', y='Case Count',
+                           title="Top 10 Pilots by Case Count")
+                fig.update_xaxes(tickangle=45)
+                st.plotly_chart(fig, use_container_width=True)
         
         # Subject analysis - Enhanced to match original script
         st.subheader("📋 Complete Subject Violation Breakdown (All Statuses)")
@@ -2496,7 +2512,7 @@ python sts_totalpackage_v2_Version5_Version2.py
                 st.metric("Total Relief Value", f"${df[relief_col].sum():,.2f}")
     
     # Main content tabs
-    tab1, tab2, tab3, tab4 = st.tabs(["📈 Overview", "📊 Analytics", "💰 Financial", "📋 Claims Details"])
+    tab1, tab2, tab3, tab4, tab5 = st.tabs(["📈 Overview", "📊 Analytics", "💰 Financial", "📋 Claims Details", "🔍 Comprehensive Analytics"])
     
     with tab1:
         show_overview_tab()
@@ -2509,6 +2525,294 @@ python sts_totalpackage_v2_Version5_Version2.py
     
     with tab4:
         show_claims_details_tab()
+    
+    with tab5:
+        show_comprehensive_analytics_tab()
+
+def show_comprehensive_analytics_tab():
+    """Show comprehensive analytics matching original script detail"""
+    st.header("🔍 Comprehensive Analytics")
+    st.markdown("*Complete analytics matching original script with full detail and breakdown*")
+    
+    df = get_data()
+    if df.empty:
+        st.warning("No data available. Please upload data or enable demo mode.")
+        return
+    
+    relief_rate = st.session_state.get('relief_rate', 320.47)
+    analytics = calculate_comprehensive_analytics(df, relief_rate)
+    
+    # Create multiple sections with expanders
+    
+    # === STATUS BREAKDOWN WITH COMPREHENSIVE DETAILS ===
+    with st.expander("📊 Case Status Breakdown (Comprehensive)", expanded=True):
+        st.subheader("Status Analysis with Relief & Percentages")
+        
+        status_data = []
+        total_cases = len(df)
+        total_relief_minutes = df['relief_minutes'].sum() if 'relief_minutes' in df.columns else 0
+        
+        for status in analytics['all_statuses']:
+            status_df = df[df['status'].apply(status_canonical) == status]
+            count = len(status_df)
+            relief_mins = status_df['relief_minutes'].sum() if 'relief_minutes' in status_df.columns else 0
+            relief_hhmm = minutes_to_hhmm(relief_mins)
+            relief_cost = relief_dollars(relief_mins, relief_rate)
+            pct_cases = (count / total_cases * 100) if total_cases > 0 else 0
+            pct_relief = (relief_mins / total_relief_minutes * 100) if total_relief_minutes > 0 else 0
+            
+            status_data.append({
+                'Status': status.title(),
+                'Case Count': count,
+                '% of Total Cases': f"{pct_cases:.2f}%",
+                'Relief (HH:MM)': relief_hhmm,
+                'Relief Cost': f"${relief_cost:,.2f}",
+                '% of Total Relief': f"{pct_relief:.2f}%"
+            })
+        
+        status_df_display = pd.DataFrame(status_data)
+        st.dataframe(status_df_display, use_container_width=True)
+    
+    # === 5 OLDEST INCIDENT CASES ===
+    with st.expander("📅 5 Oldest Incident Cases", expanded=True):
+        if 'oldest_5_cases' in analytics and analytics['oldest_5_cases']:
+            st.subheader("Oldest Cases by Incident Date")
+            oldest_data = []
+            for case in analytics['oldest_5_cases']:
+                oldest_data.append({
+                    'Date': case['date'].strftime("%Y-%m-%d") if hasattr(case['date'], 'strftime') else str(case['date']),
+                    'Case Number': case['case_number'],
+                    'Pilot Employee #': case['pilot']
+                })
+            oldest_df = pd.DataFrame(oldest_data)
+            st.dataframe(oldest_df, use_container_width=True)
+        else:
+            st.info("No incident date data available for oldest cases analysis.")
+    
+    # === VIOLATION BREAKDOWN BY SUBJECT INCLUDING STATUS SEGMENTATION ===
+    with st.expander("🎯 Violation Breakdown by Subject with Status Segmentation", expanded=True):
+        st.subheader("Subject Analysis with Relief by Status")
+        
+        # Create comprehensive subject breakdown
+        subject_breakdown_data = []
+        for subject, stats in analytics['subject_stats'].items():
+            # Base data
+            total_cases = stats['count']
+            total_relief_mins = stats.get('minutes', 0)
+            total_relief_hhmm = minutes_to_hhmm(total_relief_mins)
+            total_relief_cost = relief_dollars(total_relief_mins, relief_rate)
+            
+            # Status breakdown
+            status_details = {}
+            for status in analytics['all_statuses']:
+                safe_status = status.replace(' ', '_').replace('-', '_')
+                count_key = f"{safe_status}_count"
+                dollars_key = f"{safe_status}_dollars"
+                status_details[f"{status.title()} Count"] = stats.get(count_key, 0)
+                status_details[f"{status.title()} Relief"] = f"${stats.get(dollars_key, 0):,.2f}"
+            
+            row_data = {
+                'Subject': subject,
+                'Total Cases': total_cases,
+                'Total Relief (HH:MM)': total_relief_hhmm,
+                'Total Relief Cost': f"${total_relief_cost:,.2f}",
+                **status_details
+            }
+            subject_breakdown_data.append(row_data)
+        
+        # Sort by total relief cost
+        subject_breakdown_data.sort(key=lambda x: float(x['Total Relief Cost'].replace('$', '').replace(',', '')), reverse=True)
+        subject_breakdown_df = pd.DataFrame(subject_breakdown_data)
+        st.dataframe(subject_breakdown_df, use_container_width=True)
+    
+    # === EMPLOYEE MULTIPLE CASES ANALYTICS ===
+    with st.expander("👥 Employee Multiple Cases Analytics", expanded=True):
+        st.subheader("Pilots with Multiple Case Submissions")
+        
+        # Summary metrics
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            unique_pilots = len(df['pilot'].unique())
+            st.metric("Unique Pilots", unique_pilots)
+        
+        with col2:
+            pilots_with_multiple = len([p for p, count in df['pilot'].value_counts().items() if count > 1])
+            st.metric("Pilots with Multiple Cases", pilots_with_multiple)
+        
+        with col3:
+            multiple_case_total = sum([count for count in df['pilot'].value_counts() if count > 1])
+            total_cases = len(df)
+            multiple_percentage = (multiple_case_total / total_cases * 100) if total_cases > 0 else 0
+            st.metric("% of Total Caseload from Multiple Submitters", f"{multiple_percentage:.2f}%")
+        
+        with col4:
+            st.metric("Total Cases from Multiple Submitters", multiple_case_total)
+        
+        # Detailed breakdown
+        st.subheader("Detailed Multiple Case Analysis")
+        multiple_cases_data = []
+        pilot_counts = df['pilot'].value_counts()
+        
+        for pilot, count in pilot_counts.items():
+            if count > 1:
+                pilot_df = df[df['pilot'] == pilot]
+                total_relief_mins = pilot_df['relief_minutes'].sum() if 'relief_minutes' in pilot_df.columns else 0
+                total_relief_hhmm = minutes_to_hhmm(total_relief_mins)
+                total_relief_cost = relief_dollars(total_relief_mins, relief_rate)
+                subjects = ', '.join(pilot_df['subject'].apply(group_subject_key).unique())
+                statuses = ', '.join(pilot_df['status'].apply(status_canonical).unique())
+                
+                multiple_cases_data.append({
+                    'Pilot Employee #': pilot,
+                    'Number of Cases': count,
+                    'Total Relief (HH:MM)': total_relief_hhmm,
+                    'Total Relief Cost': f"${total_relief_cost:,.2f}",
+                    'Subject Types': subjects,
+                    'Case Statuses': statuses
+                })
+        
+        # Sort by number of cases
+        multiple_cases_data.sort(key=lambda x: x['Number of Cases'], reverse=True)
+        multiple_cases_df = pd.DataFrame(multiple_cases_data)
+        st.dataframe(multiple_cases_df, use_container_width=True)
+    
+    # === TOP 20 PILOTS BY RELIEF (OVERALL AND BY STATUS) ===
+    with st.expander("🏆 Top 20 Pilots by Relief Requested", expanded=True):
+        st.subheader("Top Pilots by Relief Amount")
+        
+        # Overall top 20
+        st.markdown("**Top 20 Pilots (Overall Relief)**")
+        top20_overall_data = []
+        for i, (pilot, relief_cost) in enumerate(analytics['top20_pilots_overall'].items(), 1):
+            relief_hours = relief_cost / relief_rate
+            relief_mins = relief_hours * 60
+            relief_hhmm = minutes_to_hhmm(relief_mins)
+            top20_overall_data.append({
+                'Rank': i,
+                'Pilot Employee #': pilot,
+                'Relief (HH:MM)': relief_hhmm,
+                'Relief Cost': f"${relief_cost:,.2f}"
+            })
+        
+        top20_overall_df = pd.DataFrame(top20_overall_data)
+        st.dataframe(top20_overall_df, use_container_width=True)
+        
+        # By status
+        for status, pilot_data in analytics['top20_pilots_by_status'].items():
+            if pilot_data:  # Only show if there's data
+                st.markdown(f"**Top 20 Pilots - {status.title()} Status**")
+                status_data = []
+                for i, (pilot, relief_cost) in enumerate(pilot_data.items(), 1):
+                    relief_hours = relief_cost / relief_rate
+                    relief_mins = relief_hours * 60
+                    relief_hhmm = minutes_to_hhmm(relief_mins)
+                    status_data.append({
+                        'Rank': i,
+                        'Pilot Employee #': pilot,
+                        'Relief (HH:MM)': relief_hhmm,
+                        'Relief Cost': f"${relief_cost:,.2f}"
+                    })
+                
+                status_df = pd.DataFrame(status_data)
+                st.dataframe(status_df, use_container_width=True)
+    
+    # === VIOLATION TYPE COUNTS AND PERCENTAGES ===
+    with st.expander("📋 Violation Type Analysis", expanded=True):
+        st.subheader("Raw Violation Types with Counts and Percentages")
+        
+        violation_data = []
+        total_cases = len(df)
+        for violation, count in analytics['violation_counter'].items():
+            percentage = (count / total_cases) * 100 if total_cases > 0 else 0
+            violation_data.append({
+                'Violation Type': violation,
+                'Case Count': count,
+                'Percentage of Total': f"{percentage:.2f}%"
+            })
+        
+        # Sort by count
+        violation_data.sort(key=lambda x: x['Case Count'], reverse=True)
+        violation_df = pd.DataFrame(violation_data)
+        st.dataframe(violation_df, use_container_width=True)
+        
+        st.metric("Total Unique Violation Types", analytics['unique_violation_types'])
+    
+    # === RECENT CASES AND TOP PILOTS BY CASES ===
+    with st.expander("📈 Recent Activity & Top Submitters", expanded=True):
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.subheader("Recent Activity")
+            st.metric("Cases with Activity in Past 7 Days", analytics['recent_cases'])
+        
+        with col2:
+            st.subheader("Top 10 Pilots by Number of Cases")
+            top10_data = []
+            for i, (pilot, count) in enumerate(analytics['top_10_pilots_by_cases'].items(), 1):
+                top10_data.append({
+                    'Rank': i,
+                    'Pilot Employee #': pilot,
+                    'Number of Cases': count
+                })
+            
+            top10_df = pd.DataFrame(top10_data)
+            st.dataframe(top10_df, use_container_width=True)
+    
+    # === PROBABILITY OF PAYMENT BY SUBJECT ===
+    with st.expander("🎲 Probability Analysis", expanded=True):
+        st.subheader("Probability of Payment by Subject")
+        st.markdown("*Based on Approved/(Approved+Denied) ratio*")
+        
+        prob_data = []
+        for subject, prob in analytics['probability_by_subject'].items():
+            prob_data.append({
+                'Subject': subject,
+                'Probability of Payment': f"{prob*100:.2f}%"
+            })
+        
+        # Sort by probability
+        prob_data.sort(key=lambda x: float(x['Probability of Payment'].replace('%', '')), reverse=True)
+        prob_df = pd.DataFrame(prob_data)
+        st.dataframe(prob_df, use_container_width=True)
+    
+    # === PROJECTED COSTS FOR OPEN/IN REVIEW CASES ===
+    with st.expander("💰 Cost Projections", expanded=True):
+        st.subheader("Projected Costs for Open and In Review Cases")
+        st.markdown("*Based on probability of payment and average relief amounts*")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.markdown("**Forecasted Costs by Subject**")
+            forecast_data = []
+            total_forecasted = 0
+            for subject, cost in analytics['cost_analytics']['forecasted_cost_by_subject'].items():
+                forecast_data.append({
+                    'Subject': subject,
+                    'Forecasted Cost': f"${cost:,.2f}"
+                })
+                total_forecasted += cost
+            
+            forecast_data.sort(key=lambda x: float(x['Forecasted Cost'].replace('$', '').replace(',', '')), reverse=True)
+            forecast_df = pd.DataFrame(forecast_data)
+            st.dataframe(forecast_df, use_container_width=True)
+            st.metric("Total Forecasted Cost", f"${total_forecasted:,.2f}")
+        
+        with col2:
+            st.markdown("**Actual Costs (Approved Cases)**")
+            actual_data = []
+            total_actual = 0
+            for subject, cost in analytics['cost_analytics']['actual_paid_by_subject'].items():
+                actual_data.append({
+                    'Subject': subject,
+                    'Actual Paid': f"${cost:,.2f}"
+                })
+                total_actual += cost
+            
+            actual_data.sort(key=lambda x: float(x['Actual Paid'].replace('$', '').replace(',', '')), reverse=True)
+            actual_df = pd.DataFrame(actual_data)
+            st.dataframe(actual_df, use_container_width=True)
+            st.metric("Total Actual Paid", f"${total_actual:,.2f}")
 
 if __name__ == "__main__":
     main()
