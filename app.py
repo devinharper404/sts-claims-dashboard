@@ -7,6 +7,8 @@ from datetime import datetime, timedelta
 import time
 import statistics
 import re
+import os
+import platform
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
@@ -165,6 +167,22 @@ def status_canonical(status):
     else:
         return status_str
 
+def extract_month(date_str):
+    """Extract month from date string in YYYY-MM format"""
+    if not date_str or pd.isna(date_str):
+        return "Unknown"
+    
+    date_str = str(date_str).split()[0]  # Get just the date part
+    try:
+        dt = datetime.strptime(date_str, "%Y-%m-%d")
+        return dt.strftime("%Y-%m")
+    except:
+        try:
+            dt = datetime.strptime(date_str, "%m/%d/%Y")
+            return dt.strftime("%Y-%m")
+        except:
+            return "Unknown"
+
 def calculate_comprehensive_analytics(df, relief_rate=320.47):
     """Calculate all analytics from original script including cost analytics"""
     # Add grouped subject and canonical status
@@ -243,8 +261,74 @@ def calculate_comprehensive_analytics(df, relief_rate=320.47):
     pilot_counts = df['pilot'].value_counts()
     pilots_multiple_submissions = pilot_counts[pilot_counts > 1].to_dict()
     
+    # Top 20 pilots by number of cases submitted
+    top_20_pilots_by_cases = pilot_counts.head(20).to_dict()
+    
+    # ===== TOP 20 PILOTS BY RELIEF REQUESTED (FROM ORIGINAL SCRIPT) =====
+    # Overall top 20 by relief amount
+    emp_relief_totals = df.groupby('pilot')['Relief_Dollars'].sum()
+    top20_pilots_overall = emp_relief_totals.nlargest(20).to_dict()
+    
+    # Top 20 by relief amount per status
+    top20_pilots_by_status = {}
+    for status in all_statuses:
+        status_data = df[df['Status_Canonical'] == status]
+        if len(status_data) > 0:
+            emp_relief_by_status = status_data.groupby('pilot')['Relief_Dollars'].sum()
+            top20_pilots_by_status[status] = emp_relief_by_status.nlargest(20).to_dict()
+        else:
+            top20_pilots_by_status[status] = {}
+    
     # Top 20 highest value claims
     top_20_claims = df.nlargest(20, 'Relief_Dollars')[['case_number', 'pilot', 'subject', 'Relief_Dollars', 'status']].to_dict('records')
+    
+    # Multiple case employees (pilots with more than one case)
+    multiple_case_employees = {}
+    for pilot, count in pilot_counts.items():
+        if count > 1:
+            pilot_cases = df[df['pilot'] == pilot]
+            multiple_case_employees[pilot] = {
+                'case_count': count,
+                'total_relief': pilot_cases['Relief_Dollars'].sum(),
+                'avg_relief': pilot_cases['Relief_Dollars'].mean(),
+                'subjects': pilot_cases['Subject_Grouped'].unique().tolist(),
+                'statuses': pilot_cases['Status_Canonical'].unique().tolist()
+            }
+    
+    # ===== VIOLATION TYPE ANALYSIS (FROM ORIGINAL SCRIPT) =====
+    violation_counter = df['subject'].value_counts().to_dict()
+    total_cases = len(df)
+    violation_percentages = {v: (count / total_cases) * 100 for v, count in violation_counter.items()}
+    
+    # ===== RECENT CASES ANALYSIS =====
+    recent_cases = 0
+    now = datetime.now()
+    seven_days_ago = now - timedelta(days=7)
+    for _, row in df.iterrows():
+        last_interaction = row.get('submission_date', '')  # Use submission_date or last_interaction
+        try:
+            interaction_date = datetime.strptime(str(last_interaction).split()[0], "%Y-%m-%d")
+            if interaction_date >= seven_days_ago:
+                recent_cases += 1
+        except:
+            pass
+    
+    # ===== OLDEST INCIDENT CASES =====
+    incident_cases = []
+    for _, row in df.iterrows():
+        try:
+            date_str = str(row.get('submission_date', ''))
+            if date_str and date_str != 'nan':
+                date_obj = datetime.strptime(date_str.split()[0], "%Y-%m-%d")
+                incident_cases.append({
+                    'date': date_obj,
+                    'case_number': row.get('case_number', ''),
+                    'pilot': row.get('pilot', '')
+                })
+        except:
+            continue
+    incident_cases.sort(key=lambda x: x['date'])
+    oldest_5_cases = incident_cases[:5]
     
     return {
         'subject_stats': subject_stats,
@@ -257,15 +341,30 @@ def calculate_comprehensive_analytics(df, relief_rate=320.47):
         'monthly_trends': monthly_trends,
         'outlier_analysis': outlier_analysis,
         'pilots_multiple_submissions': pilots_multiple_submissions,
+        'top_20_pilots_by_cases': top_20_pilots_by_cases,
+        'multiple_case_employees': multiple_case_employees,
         'top_20_claims': top_20_claims,
+        # New comprehensive analytics from original script
+        'top20_pilots_overall': top20_pilots_overall,
+        'top20_pilots_by_status': top20_pilots_by_status,
+        'violation_counter': violation_counter,
+        'violation_percentages': violation_percentages,
+        'recent_cases': recent_cases,
+        'oldest_5_cases': oldest_5_cases,
+        'unique_violation_types': len(violation_counter),
+        'top_10_pilots_by_cases': dict(pilot_counts.head(10)),
+        # Summary statistics
         'total_claims': len(df),
         'total_relief': df['Relief_Dollars'].sum(),
         'avg_relief': df['Relief_Dollars'].mean(),
-        'median_relief': df['Relief_Dollars'].median()
+        'median_relief': df['Relief_Dollars'].median(),
+        'unique_employees': len(pilot_counts),
+        'employees_with_multiple_cases': len(multiple_case_employees),
+        'percentage_multiple_cases': (sum(multiple_case_employees[emp]['case_count'] for emp in multiple_case_employees) / total_cases * 100) if total_cases > 0 else 0
     }
 
 def calculate_cost_analytics(df, subject_stats, probability_by_subject, avg_relief_minutes_per_subject, relief_rate):
-    """Calculate comprehensive cost analytics from original script"""
+    """Calculate comprehensive cost analytics from original script with correct forecasting"""
     
     # Filter claims by status
     approved_claims = df[df['Status_Canonical'] == 'approved'].copy()
@@ -288,49 +387,161 @@ def calculate_cost_analytics(df, subject_stats, probability_by_subject, avg_reli
     if len(approved_claims) > 0:
         actual_paid_by_subject = approved_claims.groupby('Subject_Grouped')['Relief_Dollars'].sum().to_dict()
     
-    # Forecasted cost by subject - fix the calculation
-    forecasted_cost_by_subject = {}
-    for subject in df['Subject_Grouped'].unique():
-        subject_data = df[df['Subject_Grouped'] == subject]
-        open_and_review = subject_data[subject_data['Status_Canonical'].isin(['open', 'in review'])]
-        
-        if len(open_and_review) > 0:
-            prob = probability_by_subject.get(subject, 0)
-            # Use average relief dollars for this subject from historical data
-            avg_relief = subject_data['Relief_Dollars'].mean() if len(subject_data) > 0 else 0
-            forecasted_cost_by_subject[subject] = len(open_and_review) * prob * avg_relief
-        else:
-            forecasted_cost_by_subject[subject] = 0
+    # Actual paid by violation type (raw)
+    actual_paid_by_violation = {}
+    if len(approved_claims) > 0:
+        actual_paid_by_violation = approved_claims.groupby('subject')['Relief_Dollars'].sum().to_dict()
     
-    # Top 20 forecasted by pilot
-    pilot_forecasts = {}
+    # ===== CORRECTED FORECASTING LOGIC FROM ORIGINAL SCRIPT =====
+    
+    # Forecasted cost by subject - using correct calculation
+    forecasted_cost_by_subject = {}
+    for subject, stats in subject_stats.items():
+        prob = probability_by_subject.get(subject, 0)
+        unresolved = stats.get("open_count", 0) + stats.get("in_review_count", 0)
+        avg_relief_dollars = avg_relief_minutes_per_subject.get(subject, 0)  # This is already in dollars
+        forecasted_cost_by_subject[subject] = prob * unresolved * avg_relief_dollars
+    
+    # Forecasted by pilot - matching original script logic
+    pilot_open_counts = {}
+    pilot_in_review_counts = {}
+    pilot_avg_relief = {}
+    pilot_prob = {}
+    pilot_subjects = {}
+    
+    # Group by pilot to get their unresolved cases and subjects
     for pilot in df['pilot'].unique():
         pilot_data = df[df['pilot'] == pilot]
-        pilot_forecasts[pilot] = _calculate_pilot_forecast(pilot_data, probability_by_subject, avg_relief_minutes_per_subject, relief_rate)
+        pilot_open_counts[pilot] = len(pilot_data[pilot_data['Status_Canonical'] == 'open'])
+        pilot_in_review_counts[pilot] = len(pilot_data[pilot_data['Status_Canonical'] == 'in review'])
+        
+        # Get all subjects for this pilot
+        subjects = pilot_data['Subject_Grouped'].tolist()
+        pilot_subjects[pilot] = subjects
+        
+        # Calculate average probability and relief for this pilot based on their subjects
+        if subjects:
+            pilot_prob[pilot] = sum(probability_by_subject.get(s, 0) for s in subjects) / len(subjects)
+            pilot_avg_relief[pilot] = sum(avg_relief_minutes_per_subject.get(s, 0) for s in subjects) / len(subjects)
+        else:
+            pilot_prob[pilot] = 0
+            pilot_avg_relief[pilot] = 0
     
-    top20_forecasted_by_pilot = sorted(pilot_forecasts.items(), key=lambda x: x[1], reverse=True)[:20]
+    # Calculate forecasted cost by pilot
+    forecasted_cost_by_pilot = {}
+    for pilot in pilot_subjects.keys():
+        unresolved = pilot_open_counts.get(pilot, 0) + pilot_in_review_counts.get(pilot, 0)
+        forecasted_cost_by_pilot[pilot] = pilot_prob[pilot] * unresolved * pilot_avg_relief[pilot]
+    
+    top20_forecasted_by_pilot = sorted(forecasted_cost_by_pilot.items(), key=lambda x: x[1], reverse=True)[:20]
+    
+    # Forecasted by violation type (raw)
+    violation_prob = {}
+    violation_avg_relief = {}
+    violation_open = {}
+    violation_in_review = {}
+    
+    for violation in df['subject'].unique():
+        # Map violation to subject group to get probability
+        subject_group = group_subject_key(violation)
+        violation_prob[violation] = probability_by_subject.get(subject_group, 0)
+        violation_avg_relief[violation] = avg_relief_minutes_per_subject.get(subject_group, 0)
+        
+        violation_data = df[df['subject'] == violation]
+        violation_open[violation] = len(violation_data[violation_data['Status_Canonical'] == 'open'])
+        violation_in_review[violation] = len(violation_data[violation_data['Status_Canonical'] == 'in review'])
+    
+    forecasted_cost_by_violation = {}
+    for violation in violation_prob:
+        unresolved = violation_open[violation] + violation_in_review[violation]
+        forecasted_cost_by_violation[violation] = violation_prob[violation] * unresolved * violation_avg_relief[violation]
+    
+    # Forecasted by month - using incident date
+    month_prob = {}
+    month_avg_relief = {}
+    month_open = {}
+    month_in_review = {}
+    
+    for _, row in df.iterrows():
+        # Extract month from incident date or submission date
+        month = extract_month(row.get('submission_date', ''))
+        if month == "Unknown":
+            continue
+            
+        subject = row['Subject_Grouped']
+        if month not in month_prob:
+            month_prob[month] = probability_by_subject.get(subject, 0)
+            month_avg_relief[month] = avg_relief_minutes_per_subject.get(subject, 0)
+            month_open[month] = 0
+            month_in_review[month] = 0
+        
+        if row['Status_Canonical'] == 'open':
+            month_open[month] += 1
+        elif row['Status_Canonical'] == 'in review':
+            month_in_review[month] += 1
+    
+    forecasted_cost_by_month = {}
+    for month in month_prob:
+        unresolved = month_open[month] + month_in_review[month]
+        forecasted_cost_by_month[month] = month_prob[month] * unresolved * month_avg_relief[month]
+    
+    # ===== AGING FORECAST =====
+    now = datetime.now()
+    aging_buckets = ["0-30", "31-60", "61-90", "91+"]
+    aging_forecast = {bucket: 0.0 for bucket in aging_buckets}
+    
+    for _, row in df.iterrows():
+        if row['Status_Canonical'] not in ['open', 'in review']:
+            continue
+        
+        try:
+            # Use submission date for aging calculation
+            created = datetime.strptime(str(row.get('submission_date', '')).split()[0], "%Y-%m-%d")
+            age = (now - created).days
+        except:
+            age = 0
+        
+        # Determine age bucket
+        if age <= 30:
+            bucket = "0-30"
+        elif age <= 60:
+            bucket = "31-60"
+        elif age <= 90:
+            bucket = "61-90"
+        else:
+            bucket = "91+"
+        
+        # Calculate forecasted cost for this case
+        subject = row['Subject_Grouped']
+        prob = probability_by_subject.get(subject, 0)
+        avg_relief = avg_relief_minutes_per_subject.get(subject, 0)
+        cost = prob * avg_relief
+        aging_forecast[bucket] += cost
     
     # Status costs
     status_costs = df.groupby('Status_Canonical')['Relief_Dollars'].sum().to_dict()
     status_avg_costs = df.groupby('Status_Canonical')['Relief_Dollars'].mean().to_dict()
     
-    # Outlier cases (high cost)
-    relief_q3 = df['Relief_Dollars'].quantile(0.75)
-    relief_q1 = df['Relief_Dollars'].quantile(0.25)
-    iqr = relief_q3 - relief_q1
-    outlier_threshold = relief_q3 + 1.5 * iqr
-    outlier_cases = df[df['Relief_Dollars'] > outlier_threshold].to_dict('records')
+    # Outlier cases (high cost) - using statistical outlier detection
+    reliefs = df[df['Relief_Dollars'] > 0]['Relief_Dollars'].tolist()
+    if reliefs:
+        mean_relief = sum(reliefs) / len(reliefs)
+        std_relief = (sum((x - mean_relief) ** 2 for x in reliefs) / len(reliefs)) ** 0.5
+        outlier_threshold = mean_relief + 2 * std_relief
+        outlier_cases = df[df['Relief_Dollars'] > outlier_threshold].to_dict('records')
+    else:
+        outlier_cases = []
     
     # Cost statistics
     paid_costs = approved_claims['Relief_Dollars'].tolist() if len(approved_claims) > 0 else [0]
-    median_paid_cost = statistics.median(paid_costs)
-    mean_paid_cost = statistics.mean(paid_costs)
+    median_paid_cost = statistics.median(paid_costs) if paid_costs else 0
+    mean_paid_cost = statistics.mean(paid_costs) if paid_costs else 0
     
-    forecasted_costs_list = list(forecasted_cost_by_subject.values())
+    forecasted_costs_list = [v for v in forecasted_cost_by_subject.values() if v > 0]
     median_forecasted_cost = statistics.median(forecasted_costs_list) if forecasted_costs_list else 0
     mean_forecasted_cost = statistics.mean(forecasted_costs_list) if forecasted_costs_list else 0
     
-    total_forecasted_cost = sum(forecasted_costs_list)
+    total_forecasted_cost = sum(forecasted_cost_by_subject.values())
     cost_variance = total_actual_paid_cost - total_forecasted_cost
     variance_percentage = (cost_variance / total_forecasted_cost * 100) if total_forecasted_cost > 0 else 0
     
@@ -343,29 +554,34 @@ def calculate_cost_analytics(df, subject_stats, probability_by_subject, avg_reli
         'cost_variance': cost_variance,
         'variance_percentage': variance_percentage,
         'top_pilots_by_cost': top_pilots_by_cost,
-        'cost_by_status': status_costs,
+        'status_costs': status_costs,
+        'status_avg_costs': status_avg_costs,
         'forecasted_cost_by_subject': forecasted_cost_by_subject,
-        'cost_statistics': {
-            'mean_cost': mean_paid_cost,
-            'median_cost': median_paid_cost,
-            'min_cost': df['relief_dollars'].min(),
-            'max_cost': df['relief_dollars'].max(),
-            'std_cost': df['relief_dollars'].std(),
-            'cost_variance_stat': df['relief_dollars'].var()
-        },
+        'forecasted_cost_by_pilot': forecasted_cost_by_pilot,
+        'forecasted_cost_by_violation': forecasted_cost_by_violation,
+        'forecasted_cost_by_month': forecasted_cost_by_month,
+        'aging_forecast': aging_forecast,
+        'actual_paid_by_pilot': actual_paid_by_pilot,
+        'actual_paid_by_subject': actual_paid_by_subject,
+        'actual_paid_by_violation': actual_paid_by_violation,
         'total_actual_paid_cost': total_actual_paid_cost,
         'num_approved_cases': num_approved_cases,
         'avg_paid_per_case': avg_paid_per_case,
         'top20_actual_paid_by_pilot': top20_actual_paid_by_pilot,
-        'actual_paid_by_subject': actual_paid_by_subject,
         'top20_forecasted_by_pilot': top20_forecasted_by_pilot,
-        'status_costs': status_costs,
-        'status_avg_costs': status_avg_costs,
         'outlier_cases': outlier_cases,
         'median_paid_cost': median_paid_cost,
         'mean_paid_cost': mean_paid_cost,
         'median_forecasted_cost': median_forecasted_cost,
-        'mean_forecasted_cost': mean_forecasted_cost
+        'mean_forecasted_cost': mean_forecasted_cost,
+        'cost_statistics': {
+            'mean_cost': mean_paid_cost,
+            'median_cost': median_paid_cost,
+            'min_cost': df['Relief_Dollars'].min() if len(df) > 0 else 0,
+            'max_cost': df['Relief_Dollars'].max() if len(df) > 0 else 0,
+            'std_cost': df['Relief_Dollars'].std() if len(df) > 0 else 0,
+            'cost_variance_stat': df['Relief_Dollars'].var() if len(df) > 0 else 0
+        }
     }
 
 def _calculate_pilot_forecast(pilot_data, probability_by_subject, avg_relief_minutes_per_subject, relief_rate):
@@ -604,6 +820,59 @@ def show_overview_tab():
                 fig.update_xaxes(tickangle=45)
                 st.plotly_chart(fig, use_container_width=True)
         
+        # Top 20 Pilots by Cases Submitted
+        if analytics['top_20_pilots_by_cases']:
+            st.subheader("🏆 Top 20 Pilots by Cases Submitted")
+            top_pilots_df = pd.DataFrame(list(analytics['top_20_pilots_by_cases'].items()), 
+                                       columns=['Pilot', 'Cases Submitted'])
+            top_pilots_df = top_pilots_df.sort_values('Cases Submitted', ascending=False)
+            
+            col1, col2 = st.columns([1, 1])
+            with col1:
+                st.dataframe(top_pilots_df, use_container_width=True, height=400)
+            with col2:
+                fig = px.bar(top_pilots_df.head(15), x='Cases Submitted', y='Pilot',
+                           title="Top 15 Pilots by Cases Submitted",
+                           orientation='h')
+                fig.update_layout(height=400)
+                st.plotly_chart(fig, use_container_width=True)
+        
+        # Multiple Case Employees (Enhanced)
+        if analytics['multiple_case_employees']:
+            st.subheader("👥 Multiple Case Employees (Detailed)")
+            
+            # Create detailed dataframe
+            multi_employees_data = []
+            for pilot, details in analytics['multiple_case_employees'].items():
+                multi_employees_data.append({
+                    'Pilot': pilot,
+                    'Cases': details['case_count'],
+                    'Total Relief ($)': f"${details['total_relief']:,.2f}",
+                    'Avg Relief ($)': f"${details['avg_relief']:,.2f}",
+                    'Subjects': ', '.join(details['subjects'][:3]) + ('...' if len(details['subjects']) > 3 else ''),
+                    'Statuses': ', '.join(details['statuses'])
+                })
+            
+            multi_df = pd.DataFrame(multi_employees_data)
+            multi_df = multi_df.sort_values('Cases', ascending=False)
+            
+            # Display table and chart
+            col1, col2 = st.columns([2, 1])
+            with col1:
+                st.dataframe(multi_df, use_container_width=True, height=300)
+            with col2:
+                # Chart showing case distribution
+                case_dist = pd.DataFrame(list(analytics['multiple_case_employees'].items()))
+                case_dist.columns = ['Pilot', 'Details']
+                case_dist['Cases'] = case_dist['Details'].apply(lambda x: x['case_count'])
+                case_dist['Relief'] = case_dist['Details'].apply(lambda x: x['total_relief'])
+                
+                fig = px.scatter(case_dist, x='Cases', y='Relief', 
+                               hover_data=['Pilot'],
+                               title="Cases vs Relief Amount",
+                               labels={'Cases': 'Number of Cases', 'Relief': 'Total Relief ($)'})
+                st.plotly_chart(fig, use_container_width=True)
+        
     except Exception as e:
         st.error(f"Error displaying overview: {str(e)}")
 
@@ -629,6 +898,92 @@ def show_analytics_tab():
             fig = px.bar(top_claims_df.head(10), x='case_number', y='relief_dollars',
                         title="Top 10 Claims by Relief Value", hover_data=['pilot', 'subject'])
             fig.update_xaxes(tickangle=45)
+            st.plotly_chart(fig, use_container_width=True)
+        
+        # ===== NEW: TOP 20 PILOTS BY RELIEF AMOUNT (FROM ORIGINAL SCRIPT) =====
+        st.subheader("🥇 Top 20 Pilots by Relief Amount - Overall")
+        if analytics.get('top20_pilots_overall'):
+            top_pilots_relief_df = pd.DataFrame(list(analytics['top20_pilots_overall'].items()), 
+                                               columns=['Pilot', 'Total Relief ($)'])
+            top_pilots_relief_df = top_pilots_relief_df.sort_values('Total Relief ($)', ascending=False)
+            
+            col1, col2 = st.columns([2, 1])
+            with col1:
+                st.dataframe(top_pilots_relief_df, use_container_width=True)
+            with col2:
+                fig = px.bar(top_pilots_relief_df.head(10), x='Total Relief ($)', y='Pilot',
+                           title="Top 10 Pilots by Relief Amount", orientation='h')
+                fig.update_layout(height=400)
+                st.plotly_chart(fig, use_container_width=True)
+        
+        # Top 20 Pilots by Relief Amount per Status
+        if analytics.get('top20_pilots_by_status'):
+            st.subheader("🏅 Top 20 Pilots by Relief Amount - By Status")
+            
+            # Create tabs for each status
+            status_tabs = st.tabs([status.title() for status in analytics['top20_pilots_by_status'].keys()])
+            
+            for i, (status, status_data) in enumerate(analytics['top20_pilots_by_status'].items()):
+                with status_tabs[i]:
+                    if status_data:
+                        status_df = pd.DataFrame(list(status_data.items()), 
+                                               columns=['Pilot', f'Relief ({status.title()})'])
+                        status_df = status_df.sort_values(f'Relief ({status.title()})', ascending=False)
+                        
+                        col1, col2 = st.columns([1, 1])
+                        with col1:
+                            st.dataframe(status_df, use_container_width=True)
+                        with col2:
+                            if len(status_df) > 0:
+                                fig = px.bar(status_df.head(10), 
+                                           x=f'Relief ({status.title()})', y='Pilot',
+                                           title=f"Top 10 Pilots - {status.title()}", 
+                                           orientation='h')
+                                st.plotly_chart(fig, use_container_width=True)
+                    else:
+                        st.info(f"No data available for {status} status")
+        
+        # ===== VIOLATION TYPE ANALYSIS =====
+        st.subheader("⚖️ Violation Type Analysis")
+        if analytics.get('violation_counter'):
+            violation_df = pd.DataFrame([
+                {'Violation': violation, 'Count': count, 'Percentage': f"{analytics['violation_percentages'][violation]:.2f}%"}
+                for violation, count in analytics['violation_counter'].items()
+            ])
+            violation_df = violation_df.sort_values('Count', ascending=False)
+            
+            col1, col2 = st.columns([2, 1])
+            with col1:
+                st.dataframe(violation_df, use_container_width=True, height=400)
+            with col2:
+                st.metric("Total Unique Violation Types", analytics.get('unique_violation_types', 0))
+                st.metric("Recent Cases (Last 7 Days)", analytics.get('recent_cases', 0))
+                
+                # Top violations chart
+                top_violations = violation_df.head(8)
+                fig = px.bar(top_violations, x='Count', y='Violation',
+                           title="Top 8 Violation Types", orientation='h')
+                fig.update_layout(height=300)
+                st.plotly_chart(fig, use_container_width=True)
+        
+        # ===== OLDEST CASES =====
+        if analytics.get('oldest_5_cases'):
+            st.subheader("📅 5 Oldest Cases")
+            oldest_df = pd.DataFrame(analytics['oldest_5_cases'])
+            oldest_df['date'] = oldest_df['date'].dt.strftime('%Y-%m-%d')
+            st.dataframe(oldest_df, use_container_width=True)
+        
+        # ===== EMPLOYEE STATISTICS =====
+        st.subheader("👨‍✈️ Employee Statistics Summary")
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            st.metric("Unique Employees", analytics.get('unique_employees', 0))
+        with col2:
+            st.metric("Employees with Multiple Cases", analytics.get('employees_with_multiple_cases', 0))
+        with col3:
+            st.metric("% Cases from Multi-Case Employees", f"{analytics.get('percentage_multiple_cases', 0):.1f}%")
+        with col4:
+            st.metric("Total Cases", analytics.get('total_claims', 0))
             st.plotly_chart(fig, use_container_width=True)
         
         # Subject analysis
@@ -677,6 +1032,101 @@ def show_analytics_tab():
                              labels={'x': 'Month', 'y': 'Total Cost ($)'})
                 fig.update_xaxes(tickangle=45)
                 st.plotly_chart(fig, use_container_width=True)
+        
+        # Top 20 Pilots by Cases Submitted (Detailed View)
+        if analytics.get('top_20_pilots_by_cases'):
+            st.subheader("🏆 Top 20 Pilots by Cases Submitted (Detailed)")
+            
+            # Create enhanced pilot statistics
+            pilot_detailed = []
+            for pilot, case_count in analytics['top_20_pilots_by_cases'].items():
+                pilot_data = df[df['pilot'] == pilot]
+                pilot_detailed.append({
+                    'Pilot': pilot,
+                    'Total Cases': case_count,
+                    'Total Relief ($)': pilot_data['Relief_Dollars'].sum(),
+                    'Avg Relief ($)': pilot_data['Relief_Dollars'].mean(),
+                    'Approved Cases': len(pilot_data[pilot_data['Status_Canonical'] == 'approved']),
+                    'Denied Cases': len(pilot_data[pilot_data['Status_Canonical'] == 'denied']),
+                    'Open Cases': len(pilot_data[pilot_data['Status_Canonical'] == 'open']),
+                    'Approval Rate (%)': round(
+                        len(pilot_data[pilot_data['Status_Canonical'] == 'approved']) / 
+                        max(len(pilot_data[pilot_data['Status_Canonical'].isin(['approved', 'denied'])]), 1) * 100, 1
+                    )
+                })
+            
+            pilot_detailed_df = pd.DataFrame(pilot_detailed)
+            pilot_detailed_df = pilot_detailed_df.sort_values('Total Cases', ascending=False)
+            
+            col1, col2 = st.columns([2, 1])
+            with col1:
+                st.dataframe(pilot_detailed_df, use_container_width=True, height=400)
+            with col2:
+                # Top 10 pilots by cases chart
+                fig = px.bar(pilot_detailed_df.head(10), x='Total Cases', y='Pilot',
+                           title="Top 10 Pilots by Cases", orientation='h')
+                fig.update_layout(height=400)
+                st.plotly_chart(fig, use_container_width=True)
+        
+        # Multiple Case Employees Analysis
+        if analytics.get('multiple_case_employees'):
+            st.subheader("👥 Multiple Case Employees - Deep Dive")
+            
+            multi_employees = analytics['multiple_case_employees']
+            
+            # Summary metrics
+            col1, col2, col3, col4 = st.columns(4)
+            with col1:
+                st.metric("Pilots with Multiple Cases", len(multi_employees))
+            with col2:
+                total_multi_cases = sum(details['case_count'] for details in multi_employees.values())
+                st.metric("Total Cases (Multi-Case Pilots)", total_multi_cases)
+            with col3:
+                total_multi_relief = sum(details['total_relief'] for details in multi_employees.values())
+                st.metric("Total Relief (Multi-Case)", f"${total_multi_relief:,.0f}")
+            with col4:
+                avg_cases_per_pilot = total_multi_cases / len(multi_employees) if multi_employees else 0
+                st.metric("Avg Cases per Multi-Case Pilot", f"{avg_cases_per_pilot:.1f}")
+            
+            # Detailed breakdown
+            multi_detail = []
+            for pilot, details in multi_employees.items():
+                multi_detail.append({
+                    'Pilot': pilot,
+                    'Number of Cases': details['case_count'],
+                    'Total Relief ($)': details['total_relief'],
+                    'Average Relief ($)': details['avg_relief'],
+                    'Subject Categories': len(details['subjects']),
+                    'Status Types': len(details['statuses']),
+                    'Primary Subjects': ', '.join(details['subjects'][:2]),
+                    'Status Distribution': ', '.join(details['statuses'])
+                })
+            
+            multi_detail_df = pd.DataFrame(multi_detail)
+            multi_detail_df = multi_detail_df.sort_values('Number of Cases', ascending=False)
+            
+            # Display detailed table
+            st.dataframe(multi_detail_df, use_container_width=True)
+            
+            # Analysis charts
+            col1, col2 = st.columns(2)
+            with col1:
+                # Distribution of case counts
+                case_counts = [details['case_count'] for details in multi_employees.values()]
+                fig = px.histogram(x=case_counts, title="Distribution of Case Counts (Multi-Case Pilots)",
+                                 labels={'x': 'Number of Cases', 'y': 'Number of Pilots'})
+                st.plotly_chart(fig, use_container_width=True)
+            
+            with col2:
+                # Relief vs case count scatter
+                relief_data = [(details['case_count'], details['total_relief']) 
+                              for details in multi_employees.values()]
+                if relief_data:
+                    cases, relief = zip(*relief_data)
+                    fig = px.scatter(x=cases, y=relief, 
+                                   title="Cases vs Total Relief (Multi-Case Pilots)",
+                                   labels={'x': 'Number of Cases', 'y': 'Total Relief ($)'})
+                    st.plotly_chart(fig, use_container_width=True)
         
     except Exception as e:
         st.error(f"Error displaying analytics: {str(e)}")
@@ -750,6 +1200,131 @@ def show_financial_tab():
             if any(v > 0 for v in forecast_data.values()):
                 forecast_df = pd.DataFrame(list(forecast_data.items()), 
                                          columns=['Subject', 'Forecasted Cost'])
+                forecast_df = forecast_df[forecast_df['Forecasted Cost'] > 0].sort_values('Forecasted Cost', ascending=False)
+                
+                col1, col2 = st.columns([1, 1])
+                with col1:
+                    st.dataframe(forecast_df, use_container_width=True)
+                with col2:
+                    if len(forecast_df) > 0:
+                        fig = px.bar(forecast_df.head(8), x='Forecasted Cost', y='Subject',
+                                   title="Top Forecasted Costs by Subject", orientation='h')
+                        st.plotly_chart(fig, use_container_width=True)
+            else:
+                st.info("No positive forecasted costs to display")
+        
+        # ===== COMPREHENSIVE COST ANALYTICS FROM ORIGINAL SCRIPT =====
+        
+        # Top 20 Forecasted by Pilot
+        if cost_data.get('top20_forecasted_by_pilot'):
+            st.subheader("🚀 Top 20 Forecasted Cost by Pilot")
+            forecast_pilots = cost_data['top20_forecasted_by_pilot']
+            if forecast_pilots:
+                forecast_pilots_df = pd.DataFrame(forecast_pilots, columns=['Pilot', 'Forecasted Cost'])
+                forecast_pilots_df = forecast_pilots_df[forecast_pilots_df['Forecasted Cost'] > 0]
+                
+                if len(forecast_pilots_df) > 0:
+                    col1, col2 = st.columns([2, 1])
+                    with col1:
+                        st.dataframe(forecast_pilots_df, use_container_width=True)
+                    with col2:
+                        fig = px.bar(forecast_pilots_df.head(10), x='Forecasted Cost', y='Pilot',
+                                   title="Top 10 Forecasted by Pilot", orientation='h')
+                        fig.update_layout(height=400)
+                        st.plotly_chart(fig, use_container_width=True)
+                else:
+                    st.info("No positive pilot forecasts to display")
+        
+        # Forecasted Cost by Violation Type
+        if cost_data.get('forecasted_cost_by_violation'):
+            st.subheader("⚖️ Forecasted Cost by Violation Type")
+            violation_forecast = cost_data['forecasted_cost_by_violation']
+            positive_forecasts = {k: v for k, v in violation_forecast.items() if v > 0}
+            
+            if positive_forecasts:
+                violation_df = pd.DataFrame(list(positive_forecasts.items()), 
+                                          columns=['Violation', 'Forecasted Cost'])
+                violation_df = violation_df.sort_values('Forecasted Cost', ascending=False)
+                
+                col1, col2 = st.columns([2, 1])
+                with col1:
+                    st.dataframe(violation_df, use_container_width=True, height=300)
+                with col2:
+                    fig = px.bar(violation_df.head(8), x='Forecasted Cost', y='Violation',
+                               title="Top Violations by Forecast", orientation='h')
+                    fig.update_layout(height=300)
+                    st.plotly_chart(fig, use_container_width=True)
+        
+        # Forecasted Cost by Month
+        if cost_data.get('forecasted_cost_by_month'):
+            st.subheader("📅 Forecasted Cost by Month")
+            monthly_forecast = cost_data['forecasted_cost_by_month']
+            positive_monthly = {k: v for k, v in monthly_forecast.items() if v > 0}
+            
+            if positive_monthly:
+                monthly_df = pd.DataFrame(list(positive_monthly.items()), 
+                                        columns=['Month', 'Forecasted Cost'])
+                monthly_df = monthly_df.sort_values('Month')
+                
+                col1, col2 = st.columns([1, 1])
+                with col1:
+                    st.dataframe(monthly_df, use_container_width=True)
+                with col2:
+                    fig = px.line(monthly_df, x='Month', y='Forecasted Cost',
+                                title="Monthly Forecast Trend")
+                    fig.update_xaxes(tickangle=45)
+                    st.plotly_chart(fig, use_container_width=True)
+        
+        # Aging Forecast
+        if cost_data.get('aging_forecast'):
+            st.subheader("📊 Cost Aging Forecast")
+            aging_data = cost_data['aging_forecast']
+            
+            aging_df = pd.DataFrame(list(aging_data.items()), 
+                                  columns=['Age Bucket (Days)', 'Forecasted Cost'])
+            aging_df = aging_df[aging_df['Forecasted Cost'] > 0]
+            
+            if len(aging_df) > 0:
+                col1, col2 = st.columns([1, 1])
+                with col1:
+                    st.dataframe(aging_df, use_container_width=True)
+                with col2:
+                    fig = px.bar(aging_df, x='Age Bucket (Days)', y='Forecasted Cost',
+                               title="Forecasted Cost by Case Age")
+                    st.plotly_chart(fig, use_container_width=True)
+        
+        # Actual vs Forecasted Cost Comparison
+        st.subheader("📈 Actual vs Forecasted Cost Analysis")
+        
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            st.metric("Mean Actual Cost", f"${cost_data.get('mean_paid_cost', 0):,.2f}")
+            st.metric("Median Actual Cost", f"${cost_data.get('median_paid_cost', 0):,.2f}")
+        
+        with col2:
+            st.metric("Mean Forecasted Cost", f"${cost_data.get('mean_forecasted_cost', 0):,.2f}")
+            st.metric("Median Forecasted Cost", f"${cost_data.get('median_forecasted_cost', 0):,.2f}")
+        
+        with col3:
+            st.metric("Number of Approved Cases", cost_data.get('num_approved_cases', 0))
+            st.metric("Average Cost per Approved Case", f"${cost_data.get('avg_paid_per_case', 0):,.2f}")
+        
+        # Outlier Analysis
+        if cost_data.get('outlier_cases'):
+            st.subheader("🔍 High Cost Outlier Cases")
+            outliers = cost_data['outlier_cases']
+            if outliers:
+                outlier_df = pd.DataFrame(outliers)
+                # Select relevant columns for display
+                display_cols = ['case_number', 'pilot', 'subject', 'Relief_Dollars', 'Status_Canonical']
+                available_cols = [col for col in display_cols if col in outlier_df.columns]
+                if available_cols:
+                    st.dataframe(outlier_df[available_cols], use_container_width=True)
+                else:
+                    st.dataframe(outlier_df, use_container_width=True)
+                forecast_df = pd.DataFrame(list(forecast_data.items()), 
+                                         columns=['Subject', 'Forecasted Cost'])
                 forecast_df = forecast_df[forecast_df['Forecasted Cost'] > 0]
                 forecast_df = forecast_df.sort_values('Forecasted Cost', ascending=False)
                 
@@ -815,6 +1390,33 @@ def show_claims_details_tab():
     st.write(f"Showing {len(filtered_df)} of {len(df)} claims")
     st.dataframe(filtered_df, use_container_width=True)
     
+    # Quick Pilot Analytics
+    st.subheader("👨‍✈️ Quick Pilot Analytics")
+    
+    # Get analytics for current filtered data
+    if not filtered_df.empty:
+        pilot_summary = filtered_df.groupby('pilot').agg({
+            'case_number': 'count',
+            'relief_dollars': ['sum', 'mean'],
+            'status': lambda x: (x == 'approved').sum()
+        }).round(2)
+        
+        pilot_summary.columns = ['Cases', 'Total Relief ($)', 'Avg Relief ($)', 'Approved Cases']
+        pilot_summary = pilot_summary.sort_values('Cases', ascending=False)
+        
+        col1, col2 = st.columns([2, 1])
+        with col1:
+            st.write("**Pilot Summary (Current Filters):**")
+            st.dataframe(pilot_summary, use_container_width=True)
+        
+        with col2:
+            # Quick stats
+            multi_case_pilots = pilot_summary[pilot_summary['Cases'] > 1]
+            st.metric("Pilots with Multiple Cases", len(multi_case_pilots))
+            if not multi_case_pilots.empty:
+                st.metric("Max Cases by One Pilot", int(pilot_summary['Cases'].max()))
+                st.metric("Avg Cases (Multi-Case Pilots)", f"{multi_case_pilots['Cases'].mean():.1f}")
+    
     # Export functionality
     if st.button("Export Filtered Data to CSV"):
         csv = filtered_df.to_csv(index=False)
@@ -827,6 +1429,29 @@ def show_claims_details_tab():
 
 def scrape_sts_data():
     """Scrape STS data with comprehensive monitoring"""
+    # Check if we're in a cloud environment where Selenium won't work
+    is_cloud_env = (
+        os.environ.get('STREAMLIT_SHARING') or 
+        os.environ.get('HEROKU') or 
+        os.environ.get('RENDER') or
+        'streamlit.app' in os.environ.get('HOSTNAME', '') or
+        platform.system() == 'Linux' and '/home/appuser' in os.environ.get('HOME', '')
+    )
+    
+    if is_cloud_env:
+        st.error("🚫 **Data Collection Not Available in Cloud Environment**")
+        st.warning("""
+        **Browser automation (Selenium) cannot run in hosted environments like Streamlit Cloud.**
+        
+        **To use data collection:**
+        1. **Run locally**: Download and run this dashboard on your local machine
+        2. **Use demo mode**: Toggle "Demo Mode" to see the dashboard with sample data
+        3. **Manual upload**: Export data from your local script and upload it
+        
+        **For now, please enable Demo Mode to explore the dashboard features.**
+        """)
+        return False
+    
     if st.session_state.collection_status['running']:
         st.warning("Data collection is already in progress.")
         return False
@@ -1135,17 +1760,38 @@ def main():
         if not demo_mode:
             st.header("📥 Data Collection")
             
-            if not st.session_state.get('data_collected', False):
-                st.warning("⚠️ No data collected yet")
-                if st.button("🚀 Start Data Collection", type="primary"):
-                    scrape_sts_data()
-            else:
-                st.success("✅ Data collected successfully")
-                df = st.session_state.get('collected_data', pd.DataFrame())
-                st.metric("Claims Collected", len(df))
+            # Check if we're in a cloud environment
+            is_cloud_env = (
+                os.environ.get('STREAMLIT_SHARING') or 
+                os.environ.get('HEROKU') or 
+                os.environ.get('RENDER') or
+                'streamlit.app' in os.environ.get('HOSTNAME', '') or
+                platform.system() == 'Linux' and '/home/appuser' in os.environ.get('HOME', '')
+            )
+            
+            if is_cloud_env:
+                st.error("🚫 **Data Collection Not Available in Cloud Environment**")
+                st.warning("""
+                **Browser automation (Selenium) cannot run in hosted environments like Streamlit Cloud.**
                 
-                if st.button("🔄 Refresh Data"):
-                    scrape_sts_data()
+                **To use data collection:**
+                - 💻 **Run locally**: Download and run this dashboard on your local machine
+                - 🎮 **Use demo mode**: Toggle "Demo Mode" above to see sample data
+                - 📤 **Manual upload**: Export data from your local script and upload it
+                """)
+                st.info("**💡 Tip:** Enable Demo Mode above to explore the dashboard with sample data!")
+            else:
+                if not st.session_state.get('data_collected', False):
+                    st.warning("⚠️ No data collected yet")
+                    if st.button("🚀 Start Data Collection", type="primary"):
+                        scrape_sts_data()
+                else:
+                    st.success("✅ Data collected successfully")
+                    df = st.session_state.get('collected_data', pd.DataFrame())
+                    st.metric("Claims Collected", len(df))
+                    
+                    if st.button("🔄 Refresh Data"):
+                        scrape_sts_data()
         
         st.divider()
         
