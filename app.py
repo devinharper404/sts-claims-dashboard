@@ -746,11 +746,43 @@ def generate_demo_data():
     return pd.DataFrame(data)
 
 def get_data():
-    """Get the current data from session state or demo data"""
+    """Get the current data from session state, uploaded data, or demo data"""
     if st.session_state.get('demo_mode', True):
         return generate_demo_data()
     else:
-        return st.session_state.get('collected_data', pd.DataFrame())
+        # Check for uploaded data first
+        if st.session_state.get('data_source') == 'uploaded' and 'uploaded_data' in st.session_state:
+            return st.session_state['uploaded_data']
+        
+        # Check for manual data
+        elif st.session_state.get('data_source') == 'manual' and 'uploaded_data' in st.session_state:
+            return st.session_state['uploaded_data']
+        
+        # Check for collected data (from web scraping)
+        elif st.session_state.get('data_collected', False) and 'collected_data' in st.session_state:
+            return st.session_state['collected_data']
+        
+        # Try to load from saved files
+        elif os.path.exists('uploaded_claims_data.csv'):
+            try:
+                df = pd.read_csv('uploaded_claims_data.csv')
+                st.session_state['uploaded_data'] = df
+                st.session_state['data_source'] = 'uploaded'
+                return df
+            except:
+                pass
+        
+        elif os.path.exists('manual_claims_data.csv'):
+            try:
+                df = pd.read_csv('manual_claims_data.csv')
+                st.session_state['uploaded_data'] = df
+                st.session_state['data_source'] = 'manual'
+                return df
+            except:
+                pass
+        
+        # Return empty DataFrame if no data available
+        return pd.DataFrame()
 
 # --- DASHBOARD FUNCTIONS ---
 
@@ -2073,6 +2105,229 @@ def main():
         with col2:
             # Display current configuration
             st.markdown(f"**Current:** ${relief_rate:.2f}/hr")
+        
+        st.divider()
+        
+        # FILE UPLOAD SECTION (Available in both demo and production mode)
+        st.header("📁 Data Upload & Management")
+        
+        upload_tab1, upload_tab2, upload_tab3 = st.tabs(["📤 Upload CSV", "📝 Manual Entry", "🔧 Instructions"])
+        
+        with upload_tab1:
+            st.subheader("Upload Your STS Claims Data")
+            st.write("Upload a CSV file with your claims data to use in the dashboard.")
+            
+            uploaded_file = st.file_uploader(
+                "Choose CSV file", 
+                type=['csv'],
+                help="CSV should have columns: case_number, pilot, subject, status, relief_minutes (or relief_dollars), submission_date"
+            )
+            
+            if uploaded_file is not None:
+                try:
+                    # Read the uploaded file
+                    df_upload = pd.read_csv(uploaded_file)
+                    
+                    # Show preview
+                    st.write("**File Preview:**")
+                    st.dataframe(df_upload.head(), use_container_width=True)
+                    
+                    # Validate columns
+                    required_cols = ['case_number', 'pilot', 'subject', 'status']
+                    optional_cols = ['relief_minutes', 'relief_dollars', 'submission_date']
+                    
+                    missing_required = [col for col in required_cols if col not in df_upload.columns]
+                    available_optional = [col for col in optional_cols if col in df_upload.columns]
+                    
+                    if missing_required:
+                        st.error(f"❌ Missing required columns: {missing_required}")
+                        st.write("**Required columns:** case_number, pilot, subject, status")
+                    else:
+                        st.success("✅ All required columns found!")
+                        
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            st.metric("Total Records", len(df_upload))
+                        with col2:
+                            st.metric("Available Optional Columns", len(available_optional))
+                        
+                        # Handle relief data
+                        if 'relief_minutes' not in df_upload.columns and 'relief_dollars' not in df_upload.columns:
+                            st.warning("⚠️ No relief data found. Adding default relief values.")
+                            df_upload['relief_minutes'] = 60  # Default 1 hour
+                        
+                        if 'relief_dollars' not in df_upload.columns and 'relief_minutes' in df_upload.columns:
+                            relief_rate = st.session_state.get('relief_rate', 320.47)
+                            df_upload['relief_dollars'] = df_upload['relief_minutes'] * (relief_rate / 60)
+                        
+                        if 'submission_date' not in df_upload.columns:
+                            st.warning("⚠️ No submission date found. Using today's date.")
+                            df_upload['submission_date'] = datetime.now().strftime('%Y-%m-%d')
+                        
+                        if st.button("📊 Use This Data", type="primary"):
+                            # Save to session state
+                            st.session_state['uploaded_data'] = df_upload
+                            st.session_state['data_source'] = 'uploaded'
+                            st.session_state['data_collected'] = True
+                            
+                            # Save to file for persistence
+                            df_upload.to_csv('uploaded_claims_data.csv', index=False)
+                            
+                            st.success(f"🎉 Data uploaded successfully! {len(df_upload)} records loaded.")
+                            st.balloons()
+                            st.rerun()
+                            
+                except Exception as e:
+                    st.error(f"❌ Error reading file: {str(e)}")
+                    st.write("Please ensure your CSV file is properly formatted.")
+        
+        with upload_tab2:
+            st.subheader("Manual Data Entry")
+            st.write("Add individual records manually (useful for testing):")
+            
+            with st.form("manual_entry_form"):
+                col1, col2 = st.columns(2)
+                with col1:
+                    case_num = st.text_input("Case Number*", placeholder="e.g., 12345")
+                    pilot_emp = st.text_input("Pilot Employee #*", placeholder="e.g., N123456")
+                with col2:
+                    violation = st.text_input("Subject/Violation*", placeholder="e.g., Rest Violation")
+                    status = st.selectbox("Status*", ["open", "approved", "denied", "in review", "impasse", "contested"])
+                
+                col3, col4 = st.columns(2)
+                with col3:
+                    relief_hrs = st.number_input("Relief Hours", min_value=0.0, max_value=24.0, value=1.0, step=0.25)
+                with col4:
+                    sub_date = st.date_input("Submission Date", value=datetime.now().date())
+                
+                submitted = st.form_submit_button("➕ Add Record", type="primary")
+                
+                if submitted:
+                    if case_num and pilot_emp and violation:
+                        relief_rate = st.session_state.get('relief_rate', 320.47)
+                        new_record = {
+                            'case_number': case_num,
+                            'pilot': pilot_emp,
+                            'subject': violation,
+                            'status': status,
+                            'relief_minutes': relief_hrs * 60,
+                            'relief_dollars': relief_hrs * relief_rate,
+                            'submission_date': sub_date.strftime('%Y-%m-%d')
+                        }
+                        
+                        # Initialize or append to manual data
+                        if 'manual_records' not in st.session_state:
+                            st.session_state['manual_records'] = []
+                        
+                        st.session_state['manual_records'].append(new_record)
+                        
+                        # Update data source
+                        if st.session_state.get('data_source') != 'uploaded':
+                            manual_df = pd.DataFrame(st.session_state['manual_records'])
+                            st.session_state['uploaded_data'] = manual_df
+                            st.session_state['data_source'] = 'manual'
+                            st.session_state['data_collected'] = True
+                            manual_df.to_csv('manual_claims_data.csv', index=False)
+                        
+                        st.success(f"✅ Record added! Total records: {len(st.session_state['manual_records'])}")
+                        st.rerun()
+                    else:
+                        st.error("❌ Please fill in all required fields (marked with *)")
+            
+            # Show current manual records
+            if 'manual_records' in st.session_state and st.session_state['manual_records']:
+                st.write(f"**Current Manual Records: {len(st.session_state['manual_records'])}**")
+                
+                col1, col2 = st.columns(2)
+                with col1:
+                    if st.button("📋 View All Records"):
+                        st.dataframe(pd.DataFrame(st.session_state['manual_records']), use_container_width=True)
+                with col2:
+                    if st.button("🗑️ Clear All Manual Records"):
+                        st.session_state['manual_records'] = []
+                        st.rerun()
+        
+        with upload_tab3:
+            st.subheader("🔧 Data Collection Instructions")
+            
+            st.write("**Option 1: Run your existing script locally**")
+            st.code("""
+# Run your comprehensive script:
+python sts_totalpackage_v2_Version5_Version2.py
+
+# This generates CSV files like:
+# - sts_claims_analytics_TIMESTAMP.csv
+# - sts_claims_monthly_trends_TIMESTAMP.csv
+
+# Upload the main analytics CSV file using the Upload tab above
+            """)
+            
+            st.write("**Option 1b: Use Standalone Data Collector**")
+            st.write("Download a simplified data collection script that you can run locally:")
+            
+            # Read the standalone script content
+            try:
+                with open('sts_data_collector.py', 'r') as f:
+                    script_content = f.read()
+                
+                st.download_button(
+                    label="📥 Download Standalone Collector Script",
+                    data=script_content,
+                    file_name="sts_data_collector.py",
+                    mime="text/x-python",
+                    help="Download a standalone Python script for collecting STS data locally"
+                )
+                
+                st.info("""
+                **How to use the standalone collector:**
+                1. Download the script above
+                2. Install requirements: `pip install selenium pandas webdriver-manager`
+                3. Run: `python sts_data_collector.py`
+                4. Upload the generated CSV file using the Upload tab above
+                """)
+            except:
+                st.warning("Standalone collector script not available in this environment.")
+            
+            st.write("**Option 2: Export from other tools**")
+            st.write("Your CSV should have these columns:")
+            st.json({
+                "required": ["case_number", "pilot", "subject", "status"],
+                "optional": ["relief_minutes", "relief_dollars", "submission_date"],
+                "example_data": {
+                    "case_number": "12345",
+                    "pilot": "N123456", 
+                    "subject": "Rest Violation",
+                    "status": "approved",
+                    "relief_minutes": 120,
+                    "relief_dollars": 640.94,
+                    "submission_date": "2025-01-15"
+                }
+            })
+            
+            st.write("**Option 3: Use Demo Mode**")
+            st.write("Toggle 'Demo Mode' above to explore the dashboard with sample data.")
+            
+            st.write("**Option 4: Download CSV Template**")
+            # Create a sample CSV template
+            template_data = {
+                'case_number': ['12345', '12346', '12347'],
+                'pilot': ['N123456', 'N123457', 'N123458'],
+                'subject': ['Rest Violation', '11.F', 'Yellow Slip / 12.T'],
+                'status': ['approved', 'denied', 'open'],
+                'relief_minutes': [120, 60, 180],
+                'relief_dollars': [640.94, 320.47, 961.41],
+                'submission_date': ['2025-01-15', '2025-01-16', '2025-01-17']
+            }
+            template_df = pd.DataFrame(template_data)
+            
+            csv_template = template_df.to_csv(index=False)
+            st.download_button(
+                label="📥 Download CSV Template",
+                data=csv_template,
+                file_name="sts_claims_template.csv",
+                mime="text/csv",
+                help="Download a template CSV file with the correct format and sample data"
+            )
         
         st.divider()
         
