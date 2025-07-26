@@ -74,7 +74,6 @@ def check_password():
         st.text_input(
             "Enter Password", type="password", on_change=password_entered, key="password"
         )
-        st.info("**Demo Password:** STS2025Dashboard!")
         st.write("*Contact your administrator for access credentials*")
         return False
     elif not st.session_state["password_correct"]:
@@ -132,6 +131,13 @@ def main():
         demo_mode = st.toggle("Demo Mode", value=True, help="Use sample data for testing")
         
         if demo_mode:
+            st.info("🎯 **Demo Mode**: Using sample data for demonstration purposes")
+            
+            # Small hint for demo password (less prominent)
+            with st.expander("ℹ️ Demo Access Info"):
+                st.write("**Demo Password:** `STS2025Dashboard!`")
+                st.write("*This is for demonstration purposes only*")
+            
             if st.button("🔄 Refresh Demo Data"):
                 load_demo_data()
             
@@ -289,28 +295,65 @@ def load_demo_data():
     import random
     import numpy as np
     
-    # Generate sample claims data
+    # Generate sample claims data with realistic patterns
     subjects = [
         'Rest', '11.F', 'Yellow Slip / 12.T', 'Green Slip / 23.Q', 
         'Short Call', 'Long Call', '23.O', 'Deadhead / 8.D',
-        'Payback Day / 23.S.11', 'White Slip / 23.P', 'Reroute / 23.L'
+        'Payback Day / 23.S.11', 'White Slip / 23.P', 'Reroute / 23.L',
+        'ARCOS / 23.Z', 'Inverse Assignment / 23.R', '23.J', '4.F'
     ]
     
     statuses = ['approved', 'denied', 'open', 'in review', 'impasse']
     
-    # Generate 100 sample claims
+    # Create employee pool - some will have multiple claims
+    base_employees = [f'N{100000 + i}' for i in range(60)]  # 60 unique employees
+    
+    # Generate 150 sample claims with some employees having multiple claims
     data = []
-    for i in range(100):
+    ticket_counter = 123000
+    
+    for i in range(150):
+        # Some employees are more likely to have multiple claims
+        if i < 30:
+            # First 30 claims - unique employees
+            emp_num = base_employees[i]
+        else:
+            # Remaining claims - some employees repeat (creating multi-claim pilots)
+            if random.random() < 0.4:  # 40% chance of repeat employee
+                emp_num = random.choice(base_employees[:40])  # Choose from first 40 employees
+            else:
+                emp_num = random.choice(base_employees[40:])  # Or use remaining employees
+        
+        # Generate realistic relief times based on subject
+        subject = random.choice(subjects)
+        if 'Rest' in subject:
+            relief_minutes = random.randint(60, 300)  # Rest violations tend to be longer
+        elif 'Short Call' in subject:
+            relief_minutes = random.randint(30, 120)  # Short calls are typically shorter
+        elif 'Yellow Slip' in subject or '12.T' in subject:
+            relief_minutes = random.randint(90, 240)  # Medium duration
+        else:
+            relief_minutes = random.randint(45, 180)  # Standard range
+        
+        # Status distribution with some bias
+        status_weights = [0.35, 0.25, 0.20, 0.15, 0.05]  # approved, denied, open, in review, impasse
+        status = random.choices(statuses, weights=status_weights)[0]
+        
+        # Generate realistic dates over past 6 months
+        days_ago = random.randint(1, 180)
+        from datetime import datetime, timedelta
+        interaction_date = (datetime.now() - timedelta(days=days_ago)).strftime('%Y-%m-%d')
+        
         data.append({
-            'Ticket #': f'12345{i:03d}',
-            'Status': random.choice(statuses),
-            'Relief Minutes': random.randint(30, 480),  # 30 min to 8 hours
-            'Subject Violations': random.choice(subjects),
-            'Emp #': f'N{100000 + i}',
-            'Last Interaction': f'2025-{random.randint(1,12):02d}-{random.randint(1,28):02d}',
-            'Assignee': f'Assignee {random.randint(1,10)}',
-            'Dispute #': f'D{1000 + i}',
-            'Incident Date Rot #': f'2025-{random.randint(1,12):02d}-{random.randint(1,28):02d} ROT{i}'
+            'Ticket #': f'{ticket_counter + i:06d}',
+            'Status': status,
+            'Relief Minutes': relief_minutes,
+            'Subject Violations': subject,
+            'Emp #': emp_num,
+            'Last Interaction': interaction_date,
+            'Assignee': f'Assignee {random.randint(1,12)}',
+            'Dispute #': f'D{2000 + i}',
+            'Incident Date Rot #': f'{interaction_date} ROT{random.randint(1,50)}'
         })
     
     st.session_state.claims_data = pd.DataFrame(data)
@@ -329,7 +372,7 @@ def show_overview_tab():
     
     # Show demo mode indicator
     if st.session_state.get('demo_mode', False):
-        st.info("🎯 **Demo Mode Active** - Showing sample data for testing purposes")
+        st.info("🎯 **Demo Mode Active** - Displaying sample data for demonstration and testing purposes")
     
     # Calculate comprehensive analytics
     subject_stats, all_statuses, enhanced_df = calculate_comprehensive_analytics(df, relief_rate)
@@ -518,11 +561,107 @@ def show_analytics_tab():
     df = st.session_state.claims_data
     relief_rate = 320.47
     
+    # Show demo mode indicator
+    if st.session_state.get('demo_mode', False):
+        st.info("🎯 **Demo Mode Active** - Displaying comprehensive sample analytics")
+    
     # Calculate comprehensive analytics
     subject_stats, all_statuses, enhanced_df = calculate_comprehensive_analytics(df, relief_rate)
     
+    # === PILOTS WITH MULTIPLE SUBMISSIONS ===
+    st.subheader("👥 Pilots with Multiple Submissions")
+    
+    # Group by employee number to find multiple submissions
+    employee_stats = enhanced_df.groupby('Emp #').agg({
+        'Ticket #': 'count',
+        'Relief_Dollars': 'sum',
+        'Relief Minutes': 'sum',
+        'Status_Canonical': lambda x: x.value_counts().to_dict(),
+        'Subject_Grouped': lambda x: ', '.join(x.unique()[:3]) + ('...' if len(x.unique()) > 3 else '')
+    }).rename(columns={'Ticket #': 'Total_Claims'})
+    
+    # Filter for employees with multiple claims
+    multiple_claims = employee_stats[employee_stats['Total_Claims'] > 1].sort_values('Total_Claims', ascending=False)
+    
+    if len(multiple_claims) > 0:
+        # Create display dataframe
+        multi_display = []
+        for emp, row in multiple_claims.iterrows():
+            status_counts = row['Status_Canonical']
+            approved = status_counts.get('approved', 0)
+            denied = status_counts.get('denied', 0)
+            pending = status_counts.get('open', 0) + status_counts.get('in review', 0)
+            
+            multi_display.append({
+                'Employee #': emp,
+                'Total Claims': row['Total_Claims'],
+                'Total Value': f"${row['Relief_Dollars']:,.0f}",
+                'Total Hours': f"{row['Relief Minutes']/60:.1f}",
+                'Approved': approved,
+                'Denied': denied,
+                'Pending': pending,
+                'Top Subjects': row['Subject_Grouped']
+            })
+        
+        multi_df = pd.DataFrame(multi_display)
+        st.dataframe(multi_df, use_container_width=True, height=300)
+        
+        # Statistics
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            st.metric("Multi-Claim Pilots", len(multiple_claims))
+        with col2:
+            avg_claims = multiple_claims['Total_Claims'].mean()
+            st.metric("Avg Claims/Pilot", f"{avg_claims:.1f}")
+        with col3:
+            total_multi_value = multiple_claims['Relief_Dollars'].sum()
+            st.metric("Multi-Claim Value", f"${total_multi_value:,.0f}")
+        with col4:
+            max_claims = multiple_claims['Total_Claims'].max()
+            st.metric("Max Claims (1 pilot)", int(max_claims))
+    else:
+        st.info("No pilots found with multiple claims in current dataset.")
+    
+    # === TOP 20 HIGHEST VALUE CLAIMS ===
+    st.subheader("🏆 Top 20 Highest Value Claims")
+    
+    # Sort by relief dollars and take top 20
+    top_20 = enhanced_df.nlargest(20, 'Relief_Dollars')[
+        ['Ticket #', 'Emp #', 'Subject_Grouped', 'Status_Canonical', 'Relief Minutes', 'Relief_Dollars', 'Last Interaction']
+    ].copy()
+    
+    # Format for display
+    top_20['Relief_Dollars_Display'] = top_20['Relief_Dollars'].apply(lambda x: f"${x:,.0f}")
+    top_20['Relief_Hours'] = (top_20['Relief Minutes'] / 60).round(1)
+    
+    display_top_20 = top_20[['Ticket #', 'Emp #', 'Subject_Grouped', 'Status_Canonical', 
+                            'Relief_Hours', 'Relief_Dollars_Display', 'Last Interaction']].rename(columns={
+        'Subject_Grouped': 'Subject',
+        'Status_Canonical': 'Status',
+        'Relief_Hours': 'Hours',
+        'Relief_Dollars_Display': 'Value',
+        'Last Interaction': 'Date'
+    })
+    
+    st.dataframe(display_top_20, use_container_width=True, height=400)
+    
+    # Top 20 summary metrics
+    col1, col2, col3, col4 = st.columns(4)
+    with col1:
+        top_20_value = top_20['Relief_Dollars'].sum()
+        st.metric("Top 20 Total Value", f"${top_20_value:,.0f}")
+    with col2:
+        avg_top_20 = top_20['Relief_Dollars'].mean()
+        st.metric("Average Top 20", f"${avg_top_20:,.0f}")
+    with col3:
+        top_20_hours = top_20['Relief Minutes'].sum() / 60
+        st.metric("Top 20 Total Hours", f"{top_20_hours:,.1f}")
+    with col4:
+        pct_of_total = (top_20_value / enhanced_df['Relief_Dollars'].sum()) * 100
+        st.metric("% of Total Value", f"{pct_of_total:.1f}%")
+    
     # === SUBJECT BREAKDOWN BY STATUS ===
-    st.subheader("📋 Complete Breakdown by Subject Violation")
+    st.subheader("📋 Complete Subject Violation Analysis")
     
     # Create detailed breakdown table
     breakdown_data = []
@@ -545,124 +684,135 @@ def show_analytics_tab():
     
     st.dataframe(breakdown_df, use_container_width=True, height=400)
     
-    # Export button for breakdown
-    if st.button("📥 Export Complete Breakdown"):
-        csv = breakdown_df.to_csv(index=False)
-        st.download_button(
-            label="Download Complete Analytics CSV",
-            data=csv,
-            file_name=f"sts_complete_analytics_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
-            mime="text/csv"
-        )
+    # === TIMING ANALYSIS ===
+    st.subheader("⏰ Timing and Duration Analysis")
     
-    # === PROBABILITY OF PAYMENT ===
-    st.subheader("🎯 Payment Probability Analysis")
+    # Relief time distribution
+    col1, col2 = st.columns(2)
     
-    probability_data = []
+    with col1:
+        # Histogram of relief minutes
+        fig = px.histogram(enhanced_df, x='Relief Minutes', nbins=20,
+                          title="Distribution of Relief Times")
+        fig.update_layout(xaxis_title="Relief Minutes", yaxis_title="Number of Claims")
+        st.plotly_chart(fig, use_container_width=True)
+        
+        # Relief time statistics
+        st.write("**Relief Time Statistics:**")
+        st.write(f"• Mean: {enhanced_df['Relief Minutes'].mean():.1f} minutes")
+        st.write(f"• Median: {enhanced_df['Relief Minutes'].median():.1f} minutes")
+        st.write(f"• Min: {enhanced_df['Relief Minutes'].min()} minutes")
+        st.write(f"• Max: {enhanced_df['Relief Minutes'].max()} minutes")
+    
+    with col2:
+        # Relief time by subject (box plot)
+        fig = px.box(enhanced_df, x='Subject_Grouped', y='Relief Minutes',
+                    title="Relief Time Distribution by Subject")
+        fig.update_layout(xaxis_tickangle=-45)
+        st.plotly_chart(fig, use_container_width=True)
+        
+        # Average relief time by subject
+        avg_relief = enhanced_df.groupby('Subject_Grouped')['Relief Minutes'].mean().sort_values(ascending=False)
+        st.write("**Average Relief Time by Subject:**")
+        for subject, avg_time in avg_relief.head(5).items():
+            st.write(f"• {subject}: {avg_time:.1f} minutes")
+    
+    # === APPROVAL PATTERNS ===
+    st.subheader("📈 Approval Rate Patterns")
+    
+    # Calculate approval rates for subjects with enough data
+    approval_patterns = []
     for subject, stats in subject_stats.items():
         approved = stats.get("approved_count", 0)
         denied = stats.get("denied_count", 0)
         total_decided = approved + denied
         
-        if total_decided > 0:
-            probability = approved / total_decided
-            probability_data.append({
+        if total_decided >= 3:  # Only include subjects with at least 3 decided cases
+            approval_rate = approved / total_decided
+            approval_patterns.append({
                 'Subject': subject,
+                'Total Decided': total_decided,
                 'Approved': approved,
                 'Denied': denied,
-                'Total Decided': total_decided,
-                'Probability': probability,
-                'Probability %': f"{probability:.1%}"
+                'Approval Rate': approval_rate,
+                'Approval Rate %': f"{approval_rate:.1%}",
+                'Confidence': 'High' if total_decided >= 10 else 'Medium' if total_decided >= 5 else 'Low'
             })
     
-    if probability_data:
-        prob_df = pd.DataFrame(probability_data).sort_values('Probability', ascending=False)
+    if approval_patterns:
+        pattern_df = pd.DataFrame(approval_patterns).sort_values('Approval Rate', ascending=False)
         
-        # Probability chart
-        fig = px.bar(prob_df, x='Subject', y='Probability', 
-                    title="Payment Approval Probability by Subject",
-                    labels={'Probability': 'Approval Rate'})
+        # Approval rate chart
+        fig = px.bar(pattern_df, x='Subject', y='Approval Rate',
+                    color='Confidence', title="Approval Rates by Subject (Confidence Level)")
         fig.update_layout(xaxis_tickangle=-45)
         fig.update_traces(texttemplate='%{y:.1%}', textposition='outside')
         st.plotly_chart(fig, use_container_width=True)
         
-        # Probability table
-        st.dataframe(prob_df[['Subject', 'Approved', 'Denied', 'Total Decided', 'Probability %']], 
+        st.dataframe(pattern_df[['Subject', 'Total Decided', 'Approved', 'Denied', 'Approval Rate %', 'Confidence']], 
                     use_container_width=True)
     
-    # === ESTIMATED APPROVALS (FORECASTING) ===
-    st.subheader("🔮 Forecasting: Estimated Future Approvals")
+    # === EXPORT ALL ANALYTICS ===
+    st.subheader("📥 Export Complete Analytics")
     
-    forecasting_data = []
-    for subject, stats in subject_stats.items():
-        approved = stats.get("approved_count", 0)
-        denied = stats.get("denied_count", 0)
-        total_decided = approved + denied
-        probability = approved / total_decided if total_decided > 0 else 0
-        
-        open_cases = stats.get("open_count", 0)
-        in_review_cases = stats.get("in review_count", 0)
-        pending_cases = open_cases + in_review_cases
-        
-        estimated_approvals = probability * pending_cases
-        estimated_dollars = estimated_approvals * (stats.get("approved_dollars", 0) / max(approved, 1))
-        
-        if pending_cases > 0:
-            forecasting_data.append({
-                'Subject': subject,
-                'Open Cases': open_cases,
-                'In Review': in_review_cases,
-                'Total Pending': pending_cases,
-                'Historical Approval Rate': f"{probability:.1%}",
-                'Estimated Approvals': f"{estimated_approvals:.1f}",
-                'Estimated Value': f"${estimated_dollars:,.0f}"
-            })
-    
-    if forecasting_data:
-        forecast_df = pd.DataFrame(forecasting_data).sort_values('Total Pending', ascending=False)
-        
-        # Forecasting chart
-        fig = px.bar(forecast_df, x='Subject', y=[col for col in forecast_df.columns if 'Estimated Approvals' in col],
-                    title="Estimated Future Approvals by Subject")
-        fig.update_layout(xaxis_tickangle=-45)
-        st.plotly_chart(fig, use_container_width=True)
-        
-        st.dataframe(forecast_df, use_container_width=True)
-    
-    # === FINANCIAL PROJECTIONS BY STATUS ===
-    st.subheader("💰 Actual and Projected Dollars by Status")
-    
-    financial_data = []
-    for subject, stats in subject_stats.items():
-        row = {'Subject': subject}
-        for status in all_statuses:
-            dollars = stats.get(f"{status}_dollars", 0)
-            row[f"{status.title()} $"] = f"${dollars:,.0f}"
-        financial_data.append(row)
-    
-    financial_df = pd.DataFrame(financial_data)
-    st.dataframe(financial_df, use_container_width=True)
-    
-    # === SUMMARY STATISTICS ===
-    col1, col2, col3, col4 = st.columns(4)
+    col1, col2, col3 = st.columns(3)
     
     with col1:
-        unique_subjects = len(subject_stats)
-        st.metric("Unique Violation Types", unique_subjects)
+        if st.button("📊 Export Subject Analysis"):
+            csv = breakdown_df.to_csv(index=False)
+            st.download_button(
+                label="Download Subject Analysis CSV",
+                data=csv,
+                file_name=f"subject_analysis_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                mime="text/csv"
+            )
     
     with col2:
-        total_relief_dollars = enhanced_df['Relief_Dollars'].sum()
-        st.metric("Total Relief Value", f"${total_relief_dollars:,.0f}")
+        if len(multiple_claims) > 0 and st.button("👥 Export Multi-Claim Pilots"):
+            csv = pd.DataFrame(multi_display).to_csv(index=False)
+            st.download_button(
+                label="Download Multi-Claim Pilots CSV",
+                data=csv,
+                file_name=f"multi_claim_pilots_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                mime="text/csv"
+            )
     
     with col3:
-        avg_probability = np.mean([stats.get("approved_count", 0) / max(stats.get("approved_count", 0) + stats.get("denied_count", 0), 1) 
-                                  for stats in subject_stats.values()]) if subject_stats else 0
-        st.metric("Average Approval Rate", f"{avg_probability:.1%}")
+        if st.button("🏆 Export Top 20 Claims"):
+            csv = display_top_20.to_csv(index=False)
+            st.download_button(
+                label="Download Top 20 Claims CSV",
+                data=csv,
+                file_name=f"top_20_claims_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                mime="text/csv"
+            )
     
-    with col4:
-        total_pending = sum([stats.get("open_count", 0) + stats.get("in review_count", 0) 
-                           for stats in subject_stats.values()])
-        st.metric("Total Pending Cases", total_pending)
+    # === COMPREHENSIVE SUMMARY ===
+    st.subheader("📋 Analytics Summary")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.info(f"""
+        **📈 Data Overview:**
+        • Total claims analyzed: **{len(enhanced_df):,}**
+        • Unique employees: **{enhanced_df['Emp #'].nunique():,}**
+        • Unique violation types: **{len(subject_stats)}**
+        • Date range: **{enhanced_df['Last Interaction'].min() if 'Last Interaction' in enhanced_df.columns else 'N/A'}** to **{enhanced_df['Last Interaction'].max() if 'Last Interaction' in enhanced_df.columns else 'N/A'}**
+        """)
+    
+    with col2:
+        # Find most active pilot and highest value subject
+        most_active = employee_stats.sort_values('Total_Claims', ascending=False).index[0] if len(employee_stats) > 0 else 'N/A'
+        highest_value_subject = max(subject_stats.items(), key=lambda x: sum([x[1].get(f"{s}_dollars", 0) for s in all_statuses]))[0] if subject_stats else 'N/A'
+        
+        st.success(f"""
+        **🎯 Key Insights:**
+        • Most active pilot: **{most_active}** ({employee_stats.loc[most_active, 'Total_Claims'] if most_active != 'N/A' else 0} claims)
+        • Highest value subject: **{highest_value_subject}**
+        • Multi-claim pilots: **{len(multiple_claims)}** ({len(multiple_claims)/len(employee_stats)*100:.1f}% of pilots)
+        • Top 20 claims represent: **{pct_of_total:.1f}%** of total value
+        """)
 
 def show_financial_tab():
     st.header("💰 Comprehensive Financial Analysis")
@@ -858,36 +1008,83 @@ def show_claims_details_tab():
     
     df = st.session_state.claims_data
     
-    # Filters
+    # Show demo mode indicator
+    if st.session_state.get('demo_mode', False):
+        st.info("🎯 **Demo Mode Active** - Displaying sample data for demonstration and testing purposes")
+    
+    # Add enhanced columns
+    enhanced_df = df.copy()
+    enhanced_df['Relief_Dollars'] = enhanced_df['Relief Minutes'].apply(relief_dollars)
+    enhanced_df['Subject_Grouped'] = enhanced_df['Subject Violations'].apply(group_subject_key)
+    enhanced_df['Status_Canonical'] = enhanced_df['Status'].apply(status_canonical)
+    
+    # Filter options
     col1, col2, col3 = st.columns(3)
     
     with col1:
-        status_filter = st.multiselect("Filter by Status", 
-                                     options=df['Status'].unique(),
-                                     default=df['Status'].unique())
+        status_filter = st.multiselect(
+            "Filter by Status",
+            options=enhanced_df['Status_Canonical'].unique(),
+            default=enhanced_df['Status_Canonical'].unique()
+        )
     
     with col2:
-        subject_filter = st.multiselect("Filter by Subject", 
-                                      options=df['Subject Violations'].unique())
+        subject_filter = st.multiselect(
+            "Filter by Subject",
+            options=enhanced_df['Subject_Grouped'].unique(),
+            default=enhanced_df['Subject_Grouped'].unique()
+        )
     
     with col3:
-        min_relief = st.number_input("Min Relief Minutes", value=0, min_value=0)
+        min_value = st.number_input("Min Relief Value ($)", value=0.0, step=100.0)
     
     # Apply filters
-    filtered_df = df[df['Status'].isin(status_filter)]
-    if subject_filter:
-        filtered_df = filtered_df[filtered_df['Subject Violations'].isin(subject_filter)]
-    filtered_df = filtered_df[filtered_df['Relief Minutes'] >= min_relief]
+    filtered_df = enhanced_df[
+        (enhanced_df['Status_Canonical'].isin(status_filter)) &
+        (enhanced_df['Subject_Grouped'].isin(subject_filter)) &
+        (enhanced_df['Relief_Dollars'] >= min_value)
+    ]
     
-    # Display filtered data
-    st.write(f"Showing {len(filtered_df)} of {len(df)} claims")
-    st.dataframe(filtered_df, use_container_width=True)
+    # Display summary
+    st.subheader(f"📊 Showing {len(filtered_df)} of {len(enhanced_df)} claims")
     
-    # Export options
+    # Summary metrics for filtered data
+    col1, col2, col3, col4 = st.columns(4)
+    
+    with col1:
+        total_value = filtered_df['Relief_Dollars'].sum()
+        st.metric("Total Value", f"${total_value:,.0f}")
+    
+    with col2:
+        avg_value = filtered_df['Relief_Dollars'].mean()
+        st.metric("Average Value", f"${avg_value:,.0f}")
+    
+    with col3:
+        total_hours = filtered_df['Relief Minutes'].sum() / 60
+        st.metric("Total Hours", f"{total_hours:,.1f}")
+    
+    with col4:
+        unique_employees = filtered_df['Emp #'].nunique()
+        st.metric("Unique Employees", unique_employees)
+    
+    # Display data table
+    display_columns = [
+        'Ticket #', 'Status', 'Relief Minutes', 'Relief_Dollars',
+        'Subject Violations', 'Subject_Grouped', 'Emp #',
+        'Last Interaction', 'Assignee'
+    ]
+    
+    # Format the dataframe for display
+    display_df = filtered_df[display_columns].copy()
+    display_df['Relief_Dollars'] = display_df['Relief_Dollars'].apply(lambda x: f"${x:,.0f}")
+    
+    st.dataframe(display_df, use_container_width=True, height=400)
+    
+    # Export filtered data
     if st.button("📥 Export Filtered Data"):
         csv = filtered_df.to_csv(index=False)
         st.download_button(
-            label="Download CSV",
+            label="Download Filtered Claims CSV",
             data=csv,
             file_name=f"filtered_claims_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
             mime="text/csv"
@@ -896,175 +1093,33 @@ def show_claims_details_tab():
 def show_realtime_status_tab():
     st.header("🔄 Real-time Status")
     
-    # Show current scraping status
-    if 'scraping_status' in st.session_state:
-        status = st.session_state.scraping_status
-        
-        if status['running']:
-            st.warning("🔄 Data collection in progress...")
-            
-            # Progress indicators
-            if 'progress' in status:
-                st.progress(status['progress'])
-                st.write(f"Processed: {status.get('processed', 0)} / {status.get('total', 0)}")
-            
-            # Live log output
-            if 'log_output' in status:
-                st.subheader("Live Log Output")
-                st.text_area("Log", status['log_output'], height=300)
-                
-            # Auto-refresh every 5 seconds
-            time.sleep(5)
-            st.rerun()
-        else:
-            st.success("✅ Data collection completed!")
-            if 'completion_time' in status:
-                st.write(f"Completed at: {status['completion_time']}")
-    else:
-        st.info("No active data collection process.")
-
-def run_data_collection(relief_rate, export_path, username, password, headless_mode, max_pages):
-    """Run the data collection script with UI parameters"""
+    if st.session_state.get('demo_mode', False):
+        st.info("🎯 **Demo Mode Active** - Real-time features disabled in demo mode")
+        st.write("In production mode, this tab would show:")
+        st.write("• Live scraping status")
+        st.write("• Data collection progress")
+        st.write("• System health monitoring")
+        st.write("• Last update timestamps")
+        st.write("• Error logs and alerts")
+        return
     
-    st.session_state.scraping_status = {
-        'running': True,
-        'start_time': datetime.now(),
-        'progress': 0,
-        'processed': 0,
-        'total': 0,
-        'log_output': ""
-    }
+    st.info("Real-time monitoring features will be available when connected to live data sources.")
     
-    # Create export directory if it doesn't exist
-    os.makedirs(export_path, exist_ok=True)
+    # Placeholder for real-time features
+    col1, col2 = st.columns(2)
     
-    # Create a modified version of the original script with the UI parameters
-    script_content = create_modified_script(relief_rate, export_path, username, password, headless_mode, max_pages)
-    
-    # Save the script temporarily in the current directory
-    temp_script_path = os.path.join(os.path.dirname(__file__), "temp_sts_script.py")
-    with open(temp_script_path, 'w') as f:
-        f.write(script_content)
-    
-    # Run in a separate thread
-    def run_script():
-        try:
-            # Get the Python executable path
-            import sys
-            python_exe = sys.executable
-            
-            process = subprocess.Popen([python_exe, temp_script_path], 
-                                     stdout=subprocess.PIPE, 
-                                     stderr=subprocess.PIPE,
-                                     text=True,
-                                     cwd=os.path.dirname(__file__))
-            
-            output, error = process.communicate()
-            
-            st.session_state.scraping_status.update({
-                'running': False,
-                'completion_time': datetime.now(),
-                'output': output,
-                'error': error,
-                'success': process.returncode == 0
-            })
-            
-            # Clean up temp script
-            try:
-                os.remove(temp_script_path)
-            except:
-                pass
-            
-            # Load the data automatically after completion
-            if process.returncode == 0:
-                load_latest_data(export_path)
-                
-        except Exception as e:
-            st.session_state.scraping_status.update({
-                'running': False,
-                'error': str(e),
-                'success': False
-            })
-    
-    # Start the script in a thread
-    threading.Thread(target=run_script, daemon=True).start()
-    st.success("🚀 Data collection started! Check the Real-time Status tab for progress.")
-
-def create_modified_script(relief_rate, export_path, username, password, headless_mode, max_pages):
-    """Create a modified version of the original script with UI parameters"""
-    return f'''
-import sys
-import os
-sys.path.append(r"{os.path.dirname(os.path.abspath(__file__))}")
-
-from sts_processor import STSClaimsProcessor
-
-if __name__ == "__main__":
-    processor = STSClaimsProcessor(
-        relief_rate={relief_rate},
-        export_path=r"{export_path}",
-        headless={headless_mode}
-    )
-    result = processor.run_full_process("{username}", "{password}", max_pages={max_pages})
-    print("Process completed:", result)
-'''
-
-def load_latest_data(export_path):
-    """Load the most recent data file"""
-    try:
-        # Create export directory if it doesn't exist
-        os.makedirs(export_path, exist_ok=True)
+    with col1:
+        st.subheader("🚀 Data Collection Status")
+        st.write("• **Last Update:** Not available in demo mode")
+        st.write("• **Collection Status:** Demo mode")
+        st.write("• **Records Processed:** N/A")
         
-        # Find the most recent analytics file
-        files = [f for f in os.listdir(export_path) if f.startswith('sts_claims_analytics_') and f.endswith('.csv')]
-        if not files:
-            st.warning("No data files found. Please run data collection first.")
-            return
-        
-        latest_file = max(files, key=lambda x: os.path.getctime(os.path.join(export_path, x)))
-        file_path = os.path.join(export_path, latest_file)
-        
-        # Load the data - this is the analytics summary, not raw claims data
-        df = pd.read_csv(file_path)
-        st.session_state.analytics_data = df
-        
-        # Try to also load raw claims data if available
-        raw_files = [f for f in os.listdir(export_path) if 'claims_raw' in f and f.endswith('.csv')]
-        if raw_files:
-            latest_raw = max(raw_files, key=lambda x: os.path.getctime(os.path.join(export_path, x)))
-            raw_df = pd.read_csv(os.path.join(export_path, latest_raw))
-            st.session_state.claims_data = raw_df
-        else:
-            # Create sample data for demo purposes
-            sample_data = {
-                'Ticket #': [f'12345{i}' for i in range(10)],
-                'Status': ['approved', 'denied', 'open', 'in review'] * 3 + ['approved', 'denied'],
-                'Relief Minutes': [120, 90, 180, 60, 240, 150, 75, 300, 45, 200],
-                'Subject Violations': ['Rest', '11.F', 'Yellow Slip / 12.T', 'Green Slip / 23.Q'] * 3 + ['Rest', 'Short Call'],
-                'Emp #': [f'N{100000 + i}' for i in range(10)],
-                'Last Interaction': ['2025-01-15', '2025-01-14', '2025-01-13'] * 4,
-            }
-            st.session_state.claims_data = pd.DataFrame(sample_data)
-        
-        st.success(f"✅ Loaded data from {latest_file}")
-        
-    except Exception as e:
-        st.error(f"Error loading data: {str(e)}")
-        # Create sample data for demo
-        sample_data = {
-            'Ticket #': ['123456', '123457', '123458'],
-            'Status': ['approved', 'denied', 'open'],
-            'Relief Minutes': [120, 90, 180],
-            'Subject Violations': ['Rest', '11.F', 'Yellow Slip / 12.T'],
-            'Emp #': ['N100000', 'N100001', 'N100002'],
-            'Last Interaction': ['2025-01-15', '2025-01-14', '2025-01-13'],
-        }
-        st.session_state.claims_data = pd.DataFrame(sample_data)
-        st.info("Demo data loaded for testing purposes.")
+    with col2:
+        st.subheader("⚡ System Health")
+        st.write("• **Connection Status:** Demo")
+        st.write("• **Processing Speed:** N/A")
+        st.write("• **Error Rate:** 0%")
 
-# === UTILITY FUNCTIONS ===
-
-@st.cache_data
 def convert_df_to_csv(df):
     """Convert dataframe to CSV for download"""
     return df.to_csv(index=False).encode('utf-8')
@@ -1098,11 +1153,16 @@ def export_data():
     
     summary_data = []
     for subject, stats in subject_stats.items():
+        # Calculate total dollars and hours from all statuses
+        total_dollars = sum([stats.get(f"{status}_dollars", 0) for status in all_statuses])
+        total_minutes = sum([stats.get(f"{status}_minutes", 0) for status in all_statuses])
+        total_hours = total_minutes / 60
+        
         summary_data.append({
             'Subject': subject,
             'Total_Cases': stats['count'],
-            'Total_Hours': stats['total_hours'],
-            'Total_Dollars': stats['total_dollars'],
+            'Total_Hours': total_hours,
+            'Total_Dollars': total_dollars,
             'Approved_Count': stats.get('approved_count', 0),
             'Denied_Count': stats.get('denied_count', 0),
             'Pending_Count': stats.get('open_count', 0) + stats.get('in review_count', 0),
@@ -1118,5 +1178,14 @@ def export_data():
         mime='text/csv'
     )
 
+def run_data_collection(relief_rate, export_path, username, password, headless_mode, max_pages):
+    """Placeholder for data collection functionality"""
+    st.error("Data collection is not available in demo mode. Please use demo data for testing.")
+
+def load_latest_data(export_path):
+    """Placeholder for loading latest data"""
+    st.error("Data loading is not available in demo mode. Please use demo data for testing.")
+
+# Run the main app
 if __name__ == "__main__":
     main()
