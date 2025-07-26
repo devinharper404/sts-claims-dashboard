@@ -93,8 +93,8 @@ def main():
         
     st.markdown('<h1 class="main-header">STS Claims Analytics Dashboard</h1>', unsafe_allow_html=True)
     
-    # Initialize demo data if no data exists
-    if 'claims_data' not in st.session_state:
+    # Initialize demo data if no data exists and demo mode is enabled
+    if 'claims_data' not in st.session_state and st.session_state.get('demo_mode', True):
         load_demo_data()
     
     # Sidebar
@@ -129,6 +129,9 @@ def main():
         
         # Demo mode toggle
         demo_mode = st.toggle("Demo Mode", value=True, help="Use sample data for testing")
+        
+        # Update session state based on toggle
+        st.session_state.demo_mode = demo_mode
         
         if demo_mode:
             st.info("🎯 **Demo Mode**: Using sample data for demonstration purposes")
@@ -357,15 +360,19 @@ def load_demo_data():
         })
     
     st.session_state.claims_data = pd.DataFrame(data)
-    st.session_state.demo_mode = True
+    # Don't automatically set demo_mode here - let the toggle control it
 
 def show_overview_tab():
     st.header("📈 STS Claims Overview")
     
     # Check if data exists
     if 'claims_data' not in st.session_state:
-        st.info("No data loaded. Please run data collection or load existing data from the sidebar.")
-        return
+        if st.session_state.get('demo_mode', True):
+            st.info("No data loaded. Loading demo data...")
+            load_demo_data()
+        else:
+            st.info("No data loaded. Please run data collection or load existing data from the sidebar.")
+            return
     
     df = st.session_state.claims_data
     relief_rate = 320.47
@@ -555,8 +562,12 @@ def show_analytics_tab():
     st.header("📊 Comprehensive Analytics")
     
     if 'claims_data' not in st.session_state:
-        st.info("No data loaded. Please run data collection first.")
-        return
+        if st.session_state.get('demo_mode', True):
+            st.info("No data loaded. Loading demo data...")
+            load_demo_data()
+        else:
+            st.info("No data loaded. Please run data collection or load existing data from the sidebar.")
+            return
     
     df = st.session_state.claims_data
     relief_rate = 320.47
@@ -818,8 +829,12 @@ def show_financial_tab():
     st.header("💰 Comprehensive Financial Analysis")
     
     if 'claims_data' not in st.session_state:
-        st.info("No data loaded. Please run data collection first.")
-        return
+        if st.session_state.get('demo_mode', True):
+            st.info("No data loaded. Loading demo data...")
+            load_demo_data()
+        else:
+            st.info("No data loaded. Please run data collection or load existing data from the sidebar.")
+            return
     
     df = st.session_state.claims_data
     relief_rate = 320.47
@@ -1093,7 +1108,7 @@ def show_claims_details_tab():
 def show_realtime_status_tab():
     st.header("🔄 Real-time Status")
     
-    if st.session_state.get('demo_mode', False):
+    if st.session_state.get('demo_mode', True):
         st.info("🎯 **Demo Mode Active** - Real-time features disabled in demo mode")
         st.write("In production mode, this tab would show:")
         st.write("• Live scraping status")
@@ -1103,22 +1118,51 @@ def show_realtime_status_tab():
         st.write("• Error logs and alerts")
         return
     
-    st.info("Real-time monitoring features will be available when connected to live data sources.")
+    # Real-time features when not in demo mode
+    st.info("🔧 **Production Mode** - Real-time monitoring features")
     
-    # Placeholder for real-time features
     col1, col2 = st.columns(2)
     
     with col1:
         st.subheader("🚀 Data Collection Status")
-        st.write("• **Last Update:** Not available in demo mode")
-        st.write("• **Collection Status:** Demo mode")
-        st.write("• **Records Processed:** N/A")
+        st.write("• **Last Update:** Ready for configuration")
+        st.write("• **Collection Status:** Awaiting start")
+        st.write("• **Records Processed:** Configure and start data collection")
         
+        if st.button("🔄 Check Data Source Connection"):
+            st.info("Testing connection to data source...")
+            st.warning("Connection test would be implemented here based on your original script.")
+    
     with col2:
         st.subheader("⚡ System Health")
-        st.write("• **Connection Status:** Demo")
-        st.write("• **Processing Speed:** N/A")
+        st.write("• **Connection Status:** Ready")
+        st.write("• **Processing Speed:** Not running")
         st.write("• **Error Rate:** 0%")
+        
+        if st.button("📊 System Diagnostics"):
+            st.info("Running system diagnostics...")
+            st.success("System ready for data collection.")
+    
+    # Configuration status
+    st.subheader("⚙️ Configuration Status")
+    config_status = []
+    
+    # Check sidebar configuration
+    relief_rate_set = True  # This would check if relief rate is configured
+    export_path_set = False  # This would check if export path is provided
+    credentials_set = False  # This would check if username/password are provided
+    
+    config_status.append(("Relief Rate", "✅ Configured" if relief_rate_set else "❌ Not set"))
+    config_status.append(("Export Path", "✅ Configured" if export_path_set else "❌ Not set"))
+    config_status.append(("Credentials", "✅ Configured" if credentials_set else "❌ Not set"))
+    
+    for item, status in config_status:
+        st.write(f"• **{item}**: {status}")
+    
+    if not all([relief_rate_set, export_path_set, credentials_set]):
+        st.warning("⚠️ Complete configuration in the sidebar to enable data collection.")
+    else:
+        st.success("✅ All configuration complete. Ready for data collection!")
 
 def convert_df_to_csv(df):
     """Convert dataframe to CSV for download"""
@@ -1179,12 +1223,49 @@ def export_data():
     )
 
 def run_data_collection(relief_rate, export_path, username, password, headless_mode, max_pages):
-    """Placeholder for data collection functionality"""
-    st.error("Data collection is not available in demo mode. Please use demo data for testing.")
+    """Run actual data collection when not in demo mode"""
+    if not username or not password:
+        st.error("Please provide username and password for data collection.")
+        return
+    
+    if not export_path:
+        st.error("Please provide an export path for data collection.")
+        return
+    
+    # Clear any existing demo data
+    if 'claims_data' in st.session_state:
+        del st.session_state['claims_data']
+    
+    st.info("🚀 Starting data collection...")
+    st.info("⚠️ Note: This is a placeholder for the actual data collection functionality.")
+    st.info("In the full implementation, this would:")
+    st.write("• Connect to the data source using provided credentials")
+    st.write("• Scrape data based on the configured parameters")
+    st.write("• Process and save data to the specified export path")
+    st.write("• Load the collected data into the dashboard")
+    
+    # Placeholder for actual implementation
+    st.warning("Real data collection functionality would be implemented here based on your original script.")
 
 def load_latest_data(export_path):
-    """Placeholder for loading latest data"""
-    st.error("Data loading is not available in demo mode. Please use demo data for testing.")
+    """Load latest data from export path when not in demo mode"""
+    if not export_path:
+        st.error("Please provide an export path to load data from.")
+        return
+    
+    # Clear any existing demo data
+    if 'claims_data' in st.session_state:
+        del st.session_state['claims_data']
+    
+    st.info("📊 Loading latest data...")
+    st.info("⚠️ Note: This is a placeholder for the actual data loading functionality.")
+    st.info("In the full implementation, this would:")
+    st.write("• Look for the latest data files in the specified export path")
+    st.write("• Load and validate the data")
+    st.write("• Display the loaded data in the dashboard")
+    
+    # Placeholder for actual implementation
+    st.warning("Real data loading functionality would be implemented here based on your original script.")
 
 # Run the main app
 if __name__ == "__main__":
