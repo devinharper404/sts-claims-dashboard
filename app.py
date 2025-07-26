@@ -103,6 +103,60 @@ def relief_dollars(relief_minutes, relief_rate=320.47):
     except (ValueError, TypeError):
         return 0
 
+def minutes_to_hhmm(minutes):
+    """Convert minutes to HH:MM format"""
+    try:
+        if pd.isna(minutes) or minutes == 0:
+            return "00:00"
+        minutes = int(float(minutes))
+        hours = minutes // 60
+        mins = minutes % 60
+        return f"{hours:02d}:{mins:02d}"
+    except:
+        return "00:00"
+
+def process_relief_data(df, relief_rate=320.47):
+    """Process relief data to ensure both minutes/dollars and HH:MM format are available"""
+    df = df.copy()
+    
+    # Handle various relief column names and formats
+    relief_cols = ['relief_requested', 'relief_minutes', 'relief_hours', 'relief_time']
+    relief_found = False
+    
+    for col in relief_cols:
+        if col in df.columns:
+            relief_found = True
+            if col == 'relief_requested':
+                # If relief_requested is in HH:MM format, convert to minutes
+                df['relief_minutes'] = df[col].apply(hhmm_to_minutes)
+            elif col == 'relief_hours':
+                # Convert hours to minutes
+                df['relief_minutes'] = df[col] * 60
+            elif col == 'relief_time':
+                # Assume it's in HH:MM format
+                df['relief_minutes'] = df[col].apply(hhmm_to_minutes)
+            break
+    
+    # If no relief column found, set default
+    if not relief_found and 'relief_minutes' not in df.columns:
+        df['relief_minutes'] = 60  # Default 1 hour
+    
+    # Ensure relief_minutes exists and is numeric
+    if 'relief_minutes' not in df.columns:
+        df['relief_minutes'] = 0
+    
+    # Convert relief_minutes to numeric, handling any non-numeric values
+    df['relief_minutes'] = pd.to_numeric(df['relief_minutes'], errors='coerce').fillna(0)
+    
+    # Calculate relief_dollars if not present
+    if 'relief_dollars' not in df.columns:
+        df['relief_dollars'] = df['relief_minutes'].apply(lambda x: relief_dollars(x, relief_rate))
+    
+    # Add HH:MM format column
+    df['relief_hhmm'] = df['relief_minutes'].apply(minutes_to_hhmm)
+    
+    return df
+
 def group_subject_key(subject):
     """Group subjects by key patterns from original script"""
     if pd.isna(subject) or subject == '':
@@ -706,6 +760,8 @@ def generate_demo_data():
         
         # Generate realistic financial data
         relief_amount = np.random.lognormal(6, 1.2) * 100  # Log-normal for realistic money distribution
+        relief_rate = 320.47  # Use default rate for demo data
+        relief_minutes = (relief_amount / relief_rate) * 60  # Convert back to minutes
         
         # Weighted status selection for realistic distributions
         status = np.random.choice(statuses, p=status_weights)
@@ -735,7 +791,9 @@ def generate_demo_data():
             'pilot': pilot,
             'subject': subject,
             'status': status,
+            'relief_minutes': relief_minutes,
             'relief_dollars': relief_amount,
+            'relief_hhmm': minutes_to_hhmm(relief_minutes),
             'submission_date': submission_date.strftime('%Y-%m-%d'),
             'decision_date': decision_date.strftime('%Y-%m-%d') if decision_date else '',
             'processing_days': (decision_date - submission_date).days if decision_date else None,
@@ -747,25 +805,31 @@ def generate_demo_data():
 
 def get_data():
     """Get the current data from session state, uploaded data, or demo data"""
+    relief_rate = st.session_state.get('relief_rate', 320.47)
+    
     if st.session_state.get('demo_mode', True):
         return generate_demo_data()
     else:
         # Check for uploaded data first
         if st.session_state.get('data_source') == 'uploaded' and 'uploaded_data' in st.session_state:
-            return st.session_state['uploaded_data']
+            df = st.session_state['uploaded_data'].copy()
+            return process_relief_data(df, relief_rate)
         
         # Check for manual data
         elif st.session_state.get('data_source') == 'manual' and 'uploaded_data' in st.session_state:
-            return st.session_state['uploaded_data']
+            df = st.session_state['uploaded_data'].copy()
+            return process_relief_data(df, relief_rate)
         
         # Check for collected data (from web scraping)
         elif st.session_state.get('data_collected', False) and 'collected_data' in st.session_state:
-            return st.session_state['collected_data']
+            df = st.session_state['collected_data'].copy()
+            return process_relief_data(df, relief_rate)
         
         # Try to load from saved files
         elif os.path.exists('uploaded_claims_data.csv'):
             try:
                 df = pd.read_csv('uploaded_claims_data.csv')
+                df = process_relief_data(df, relief_rate)
                 st.session_state['uploaded_data'] = df
                 st.session_state['data_source'] = 'uploaded'
                 return df
@@ -775,6 +839,7 @@ def get_data():
         elif os.path.exists('manual_claims_data.csv'):
             try:
                 df = pd.read_csv('manual_claims_data.csv')
+                df = process_relief_data(df, relief_rate)
                 st.session_state['uploaded_data'] = df
                 st.session_state['data_source'] = 'manual'
                 return df
@@ -840,14 +905,19 @@ def show_overview_tab():
         # Key metrics
         col1, col2, col3, col4 = st.columns(4)
         
+        # Calculate total relief hours for display
+        total_relief_hours = analytics['total_relief'] / relief_rate
+        avg_relief_hours = analytics['avg_relief'] / relief_rate
+        median_relief_hours = analytics['median_relief'] / relief_rate
+        
         with col1:
             st.metric("Total Claims", analytics['total_claims'])
         with col2:
-            st.metric("Total Relief Value", f"${analytics['total_relief']:,.2f}")
+            st.metric("Total Relief Value", f"${analytics['total_relief']:,.2f}", f"{total_relief_hours:.1f} hours")
         with col3:
-            st.metric("Average Relief", f"${analytics['avg_relief']:,.2f}")
+            st.metric("Average Relief", f"${analytics['avg_relief']:,.2f}", f"{minutes_to_hhmm(avg_relief_hours * 60)}")
         with col4:
-            st.metric("Median Relief", f"${analytics['median_relief']:,.2f}")
+            st.metric("Median Relief", f"${analytics['median_relief']:,.2f}", f"{minutes_to_hhmm(median_relief_hours * 60)}")
         
         # Status distribution
         st.subheader("📊 Claims Status Distribution")
@@ -934,9 +1004,11 @@ def show_overview_tab():
             for subject, hours in analytics['subject_relief_sorted'][:10]:  # Top 10
                 percentage = analytics['subject_relief_percentages'].get(subject, 0)
                 dollar_value = analytics['subject_relief_totals'].get(subject, 0)
+                minutes = hours * 60  # Convert hours back to minutes for HH:MM display
                 top_subjects_data.append({
                     'Subject': subject,
                     'Hours': round(hours, 2),
+                    'HH:MM': minutes_to_hhmm(minutes),
                     'Dollar Value': dollar_value,
                     '% of Total': round(percentage, 2)
                 })
@@ -959,12 +1031,15 @@ def show_overview_tab():
             # Total relief summary
             total_relief_hours = sum(analytics['subject_relief_hours'].values())
             total_relief_value = analytics.get('total_relief_all_subjects', 0)
+            total_relief_minutes = total_relief_hours * 60
             
-            col1, col2 = st.columns(2)
+            col1, col2, col3 = st.columns(3)
             with col1:
-                st.metric("🕒 **Total Relief Hours (All Subjects)**", f"{total_relief_hours:,.1f} hours")
+                st.metric("🕒 **Total Relief Hours**", f"{total_relief_hours:,.1f} hours")
             with col2:
-                st.metric("💰 **Total Relief Value (All Subjects)**", f"${total_relief_value:,.2f}")
+                st.metric("⏱️ **Total Relief Time**", f"{minutes_to_hhmm(total_relief_minutes)}")
+            with col3:
+                st.metric("💰 **Total Relief Value**", f"${total_relief_value:,.2f}")
         
     except Exception as e:
         st.error(f"Error displaying overview: {str(e)}")
@@ -1039,14 +1114,16 @@ def show_analytics_tab():
                         st.info(f"No data available for {status} status")
         
         # ===== TOTAL RELIEF REQUESTED BY SUBJECT (FROM ORIGINAL SCRIPT) =====
-        st.subheader("💰 Total Relief Requested by Subject (Hours & Percentages)")
+        st.subheader("💰 Total Relief Requested by Subject (Hours, HH:MM & Percentages)")
         if analytics.get('subject_relief_sorted'):
             relief_subject_data = []
             for subject, hours in analytics['subject_relief_sorted']:
                 percentage = analytics['subject_relief_percentages'].get(subject, 0)
+                minutes = hours * 60  # Convert hours to minutes for HH:MM display
                 relief_subject_data.append({
                     'Subject': subject,
                     'Hours': round(hours, 2),
+                    'HH:MM': minutes_to_hhmm(minutes),
                     'Percentage of Total': f"{percentage:.2f}%",
                     'Dollar Value': f"${analytics['subject_relief_totals'].get(subject, 0):,.2f}"
                 })
@@ -1441,9 +1518,11 @@ def show_financial_tab():
             for subject, hours in analytics['subject_relief_sorted']:
                 dollar_value = analytics['subject_relief_totals'].get(subject, 0)
                 percentage = analytics['subject_relief_percentages'].get(subject, 0)
+                minutes = hours * 60  # Convert hours to minutes for HH:MM display
                 relief_financial_data.append({
                     'Subject': subject,
                     'Relief Hours': round(hours, 2),
+                    'Relief HH:MM': minutes_to_hhmm(minutes),
                     'Dollar Value': dollar_value,
                     'Percentage of Total Relief': percentage
                 })
@@ -1468,15 +1547,18 @@ def show_financial_tab():
             # Summary metrics for relief by subject
             total_relief_value = analytics.get('total_relief_all_subjects', 0)
             total_relief_hours = sum(analytics['subject_relief_hours'].values())
+            total_relief_minutes = total_relief_hours * 60
             st.metrics_container = st.container()
             with st.metrics_container:
-                col1, col2, col3 = st.columns(3)
+                col1, col2, col3, col4 = st.columns(4)
                 with col1:
-                    st.metric("Total Relief Value (All Subjects)", f"${total_relief_value:,.2f}")
+                    st.metric("Total Relief Value", f"${total_relief_value:,.2f}")
                 with col2:
-                    st.metric("Total Relief Hours (All Subjects)", f"{total_relief_hours:,.1f} hrs")
+                    st.metric("Total Relief Hours", f"{total_relief_hours:,.1f} hrs")
                 with col3:
-                    st.metric("Average Relief per Hour", f"${relief_rate:.2f}/hr")
+                    st.metric("Total Relief Time", f"{minutes_to_hhmm(total_relief_minutes)}")
+                with col4:
+                    st.metric("Relief Rate", f"${relief_rate:.2f}/hr")
         
         # Top pilots by cost
         if cost_data.get('top_pilots_by_cost'):
@@ -1685,34 +1767,59 @@ def show_claims_details_tab():
     
     filtered_df = filtered_df[filtered_df['relief_dollars'] >= min_relief]
     
+    # Add HH:MM format to display if not already present
+    if 'relief_hhmm' not in filtered_df.columns and 'relief_minutes' in filtered_df.columns:
+        filtered_df['relief_hhmm'] = filtered_df['relief_minutes'].apply(minutes_to_hhmm)
+    
     st.write(f"Showing {len(filtered_df)} of {len(df)} claims")
-    st.dataframe(filtered_df, use_container_width=True)
+    
+    # Reorder columns to show HH:MM prominently
+    display_columns = ['case_number', 'pilot', 'subject', 'status']
+    if 'relief_hhmm' in filtered_df.columns:
+        display_columns.append('relief_hhmm')
+    if 'relief_dollars' in filtered_df.columns:
+        display_columns.append('relief_dollars')
+    display_columns.extend([col for col in filtered_df.columns if col not in display_columns])
+    
+    st.dataframe(filtered_df[display_columns], use_container_width=True)
     
     # Quick Pilot Analytics
     st.subheader("👨‍✈️ Quick Pilot Analytics")
     
     # Get analytics for current filtered data
     if not filtered_df.empty:
-        pilot_summary = filtered_df.groupby('pilot').agg({
-            'case_number': 'count',
-            'relief_dollars': ['sum', 'mean'],
-            'status': lambda x: (x == 'approved').sum()
-        }).round(2)
+        # Calculate relief hours and minutes for pilots
+        pilot_relief_data = []
+        for pilot in filtered_df['pilot'].unique():
+            pilot_data = filtered_df[filtered_df['pilot'] == pilot]
+            total_relief_dollars = pilot_data['relief_dollars'].sum()
+            relief_rate = st.session_state.get('relief_rate', 320.47)
+            total_relief_hours = total_relief_dollars / relief_rate
+            total_relief_minutes = total_relief_hours * 60
+            
+            pilot_relief_data.append({
+                'Pilot': pilot,
+                'Cases': len(pilot_data),
+                'Total Relief ($)': f"${total_relief_dollars:,.2f}",
+                'Total Relief (HH:MM)': minutes_to_hhmm(total_relief_minutes),
+                'Avg Relief ($)': f"${pilot_data['relief_dollars'].mean():,.2f}",
+                'Approved Cases': (pilot_data['status'] == 'approved').sum()
+            })
         
-        pilot_summary.columns = ['Cases', 'Total Relief ($)', 'Avg Relief ($)', 'Approved Cases']
-        pilot_summary = pilot_summary.sort_values('Cases', ascending=False)
+        pilot_summary_df = pd.DataFrame(pilot_relief_data)
+        pilot_summary_df = pilot_summary_df.sort_values('Cases', ascending=False)
         
         col1, col2 = st.columns([2, 1])
         with col1:
             st.write("**Pilot Summary (Current Filters):**")
-            st.dataframe(pilot_summary, use_container_width=True)
+            st.dataframe(pilot_summary_df, use_container_width=True)
         
         with col2:
             # Quick stats
-            multi_case_pilots = pilot_summary[pilot_summary['Cases'] > 1]
+            multi_case_pilots = pilot_summary_df[pilot_summary_df['Cases'] > 1]
             st.metric("Pilots with Multiple Cases", len(multi_case_pilots))
             if not multi_case_pilots.empty:
-                st.metric("Max Cases by One Pilot", int(pilot_summary['Cases'].max()))
+                st.metric("Max Cases by One Pilot", int(pilot_summary_df['Cases'].max()))
                 st.metric("Avg Cases (Multi-Case Pilots)", f"{multi_case_pilots['Cases'].mean():.1f}")
     
     # Export functionality
@@ -2196,7 +2303,14 @@ def main():
                 
                 col3, col4 = st.columns(2)
                 with col3:
-                    relief_hrs = st.number_input("Relief Hours", min_value=0.0, max_value=24.0, value=1.0, step=0.25)
+                    relief_input_type = st.radio("Relief Input Format", ["Hours (decimal)", "HH:MM"], horizontal=True)
+                    if relief_input_type == "Hours (decimal)":
+                        relief_hrs = st.number_input("Relief Hours", min_value=0.0, max_value=24.0, value=1.0, step=0.25)
+                        relief_minutes = relief_hrs * 60
+                    else:
+                        relief_hhmm = st.text_input("Relief HH:MM", value="01:00", placeholder="e.g., 02:30")
+                        relief_minutes = hhmm_to_minutes(relief_hhmm)
+                        st.write(f"= {relief_minutes/60:.2f} hours")
                 with col4:
                     sub_date = st.date_input("Submission Date", value=datetime.now().date())
                 
@@ -2210,7 +2324,7 @@ def main():
                             'pilot': pilot_emp,
                             'subject': violation,
                             'status': status,
-                            'relief_minutes': relief_hrs * 60,
+                            'relief_minutes': relief_minutes,
                             'relief_dollars': relief_hrs * relief_rate,
                             'submission_date': sub_date.strftime('%Y-%m-%d')
                         }
@@ -2308,14 +2422,15 @@ python sts_totalpackage_v2_Version5_Version2.py
             st.write("Toggle 'Demo Mode' above to explore the dashboard with sample data.")
             
             st.write("**Option 4: Download CSV Template**")
-            # Create a sample CSV template
+            # Create a sample CSV template showing both HH:MM and minutes/dollars
             template_data = {
                 'case_number': ['12345', '12346', '12347'],
                 'pilot': ['N123456', 'N123457', 'N123458'],
                 'subject': ['Rest Violation', '11.F', 'Yellow Slip / 12.T'],
                 'status': ['approved', 'denied', 'open'],
-                'relief_minutes': [120, 60, 180],
-                'relief_dollars': [640.94, 320.47, 961.41],
+                'relief_requested': ['02:00', '01:00', '03:00'],  # HH:MM format
+                'relief_minutes': [120, 60, 180],  # Optional - will be calculated if missing
+                'relief_dollars': [640.94, 320.47, 961.41],  # Optional - will be calculated if missing
                 'submission_date': ['2025-01-15', '2025-01-16', '2025-01-17']
             }
             template_df = pd.DataFrame(template_data)
@@ -2326,7 +2441,7 @@ python sts_totalpackage_v2_Version5_Version2.py
                 data=csv_template,
                 file_name="sts_claims_template.csv",
                 mime="text/csv",
-                help="Download a template CSV file with the correct format and sample data"
+                help="Template shows relief_requested in HH:MM format. Dashboard will auto-calculate minutes/dollars if missing."
             )
         
         st.divider()
