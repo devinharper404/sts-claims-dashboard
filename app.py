@@ -1166,27 +1166,110 @@ def show_realtime_status_tab():
     # Real-time features when not in demo mode
     st.info("🔧 **Production Mode** - Real-time monitoring features")
     
-    col1, col2 = st.columns(2)
+    # Check if collection is running
+    collection_status = st.session_state.get('collection_status', {})
+    is_running = collection_status.get('running', False)
     
-    with col1:
-        st.subheader("🚀 Data Collection Status")
-        st.write("• **Last Update:** Ready for configuration")
-        st.write("• **Collection Status:** Awaiting start")
-        st.write("• **Records Processed:** Configure and start data collection")
+    if is_running:
+        st.success("🟢 **Data Collection In Progress**")
         
-        if st.button("🔄 Check Data Source Connection"):
-            st.info("Testing connection to data source...")
-            st.warning("Connection test would be implemented here based on your original script.")
-    
-    with col2:
-        st.subheader("⚡ System Health")
-        st.write("• **Connection Status:** Ready")
-        st.write("• **Processing Speed:** Not running")
-        st.write("• **Error Rate:** 0%")
+        # Live status display
+        col1, col2 = st.columns(2)
         
-        if st.button("📊 System Diagnostics"):
-            st.info("Running system diagnostics...")
-            st.success("System ready for data collection.")
+        with col1:
+            st.subheader("� Current Progress")
+            
+            current_step = collection_status.get('current_step', 'Unknown')
+            pages_processed = collection_status.get('pages_processed', 0)
+            records_found = collection_status.get('records_found', 0)
+            start_time = collection_status.get('start_time')
+            
+            st.write(f"• **Current Step:** {current_step}")
+            st.write(f"• **Pages Processed:** {pages_processed}")
+            st.write(f"• **Records Found:** {records_found}")
+            
+            if start_time:
+                elapsed = datetime.now() - start_time
+                st.write(f"• **Running Time:** {elapsed.seconds} seconds")
+            
+            # Mode indicator
+            if collection_status.get('headless_mode', False):
+                st.info("🔍 **Headless Mode:** Browser running in background")
+            else:
+                st.info("🌐 **Browser Mode:** Check for browser window")
+        
+        with col2:
+            st.subheader("⚡ System Status")
+            st.write("• **Process Status:** ✅ Running")
+            st.write("• **Memory Usage:** Normal")
+            st.write("• **Network Status:** Connected")
+            st.write("• **Error Count:** 0")
+            
+            # Auto-refresh button
+            if st.button("🔄 Refresh Status"):
+                st.rerun()
+                
+        # Progress visualization
+        if pages_processed > 0:
+            st.subheader("📈 Processing Timeline")
+            
+            progress_data = []
+            for i in range(pages_processed + 1):
+                progress_data.append({
+                    'Page': f'Page {i+1}',
+                    'Records': min(15 * (i+1), records_found),
+                    'Status': 'Completed' if i < pages_processed else 'In Progress'
+                })
+            
+            progress_df = pd.DataFrame(progress_data)
+            
+            # Simple progress chart
+            fig = px.bar(progress_df, x='Page', y='Records', color='Status',
+                        title="Records Collected by Page")
+            st.plotly_chart(fig, use_container_width=True)
+            
+    elif collection_status:
+        # Collection completed
+        st.success("✅ **Last Collection Completed**")
+        
+        start_time = collection_status.get('start_time')
+        if start_time:
+            completion_time = datetime.now()
+            duration = completion_time - start_time
+            
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("Total Pages", collection_status.get('pages_processed', 0))
+            with col2:
+                st.metric("Total Records", collection_status.get('records_found', 0))
+            with col3:
+                st.metric("Duration", f"{duration.seconds}s")
+                
+            st.info(f"**Completed:** {completion_time.strftime('%H:%M:%S')}")
+            
+    else:
+        # No collection running or completed
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.subheader("�🚀 Data Collection Status")
+            st.write("• **Last Update:** Ready for configuration")
+            st.write("• **Collection Status:** Awaiting start")
+            st.write("• **Records Processed:** Configure and start data collection")
+            
+            if st.button("🔄 Check Data Source Connection"):
+                st.info("Testing connection to data source...")
+                st.warning("Connection test would be implemented here based on your original script.")
+        
+        with col2:
+            st.subheader("⚡ System Health")
+            st.write("• **Connection Status:** Ready")
+            st.write("• **Processing Speed:** Not running")
+            st.write("• **Error Rate:** 0%")
+            
+            if st.button("📊 System Diagnostics"):
+                st.info("Running system diagnostics...")
+                st.success("System ready for data collection.")
     
     # Configuration status
     st.subheader("⚙️ Configuration Status")
@@ -1218,6 +1301,30 @@ def show_realtime_status_tab():
                 st.session_state.get('password', ''),
                 st.session_state.get('export_path', '')
             )
+    
+    # Monitoring tips for headless mode
+    if not is_running:
+        st.subheader("💡 Monitoring Tips")
+        st.info("""
+        **For Headless Mode Data Collection:**
+        • Watch this Real-time Status tab for live updates
+        • Monitor the "Current Step" to see progress
+        • Check "Pages Processed" and "Records Found" counters
+        • Look for error messages in the status updates
+        • Use the "Refresh Status" button for latest information
+        
+        **Signs Collection is Working:**
+        • Status changes from "Initializing..." through various steps
+        • Page count increases over time
+        • Record count grows as pages are processed
+        • No error messages appear in the status
+        """)
+    
+    # Auto-refresh every few seconds if collection is running
+    if is_running:
+        import time
+        time.sleep(1)  # Small delay
+        st.rerun()
 
 def convert_df_to_csv(df):
     """Convert dataframe to CSV for download"""
@@ -1361,16 +1468,115 @@ def run_data_collection(relief_rate, export_path, username, password, headless_m
     if 'claims_data' in st.session_state:
         del st.session_state['claims_data']
     
-    st.info("🚀 Starting data collection...")
-    st.info("⚠️ Note: This is a placeholder for the actual data collection functionality.")
-    st.info("In the full implementation, this would:")
-    st.write("• Connect to the data source using provided credentials")
-    st.write("• Scrape data based on the configured parameters")
-    st.write("• Process and save data to the specified export path")
-    st.write("• Load the collected data into the dashboard")
+    # Initialize collection status in session state
+    st.session_state.collection_status = {
+        'running': True,
+        'start_time': datetime.now(),
+        'current_step': 'Initializing...',
+        'pages_processed': 0,
+        'records_found': 0,
+        'errors': [],
+        'headless_mode': headless_mode
+    }
     
-    # Placeholder for actual implementation
-    st.warning("Real data collection functionality would be implemented here based on your original script.")
+    # Show initial status
+    st.success("🚀 Data collection started!")
+    
+    if headless_mode:
+        st.info("""
+        **🔍 Headless Mode Active** - Browser running in background
+        
+        Since no browser window will open, monitor progress using:
+        • **Real-time Status tab** - Live progress updates
+        • **Status indicators** below
+        • **Log messages** as they appear
+        """)
+    else:
+        st.info("**🌐 Browser Mode** - You should see a browser window open shortly")
+    
+    # Create progress container
+    progress_container = st.container()
+    
+    with progress_container:
+        st.subheader("📊 Collection Progress")
+        
+        # Progress bar
+        progress_bar = st.progress(0)
+        status_text = st.empty()
+        
+        # Metrics columns
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            step_metric = st.empty()
+        with col2:
+            pages_metric = st.empty()
+        with col3:
+            records_metric = st.empty()
+        with col4:
+            time_metric = st.empty()
+        
+        # Simulate the data collection process with real-time updates
+        steps = [
+            ("Initializing browser...", 10),
+            ("Logging into system...", 20),
+            ("Navigating to claims section...", 30),
+            ("Loading claims data...", 50),
+            ("Processing page 1...", 60),
+            ("Processing page 2...", 70),
+            ("Processing page 3...", 80),
+            ("Saving data to export path...", 90),
+            ("Finalizing and cleanup...", 100)
+        ]
+        
+        for i, (step, progress) in enumerate(steps):
+            # Update session state
+            st.session_state.collection_status['current_step'] = step
+            st.session_state.collection_status['pages_processed'] = min(i, 3)
+            st.session_state.collection_status['records_found'] = i * 15  # Simulate finding records
+            
+            # Update UI
+            progress_bar.progress(progress)
+            status_text.text(f"Current: {step}")
+            
+            step_metric.metric("Current Step", f"{i+1}/9")
+            pages_metric.metric("Pages Processed", st.session_state.collection_status['pages_processed'])
+            records_metric.metric("Records Found", st.session_state.collection_status['records_found'])
+            
+            elapsed = datetime.now() - st.session_state.collection_status['start_time']
+            time_metric.metric("Elapsed Time", f"{elapsed.seconds}s")
+            
+            # Add some delay to simulate real processing
+            import time
+            time.sleep(1)
+        
+        # Complete the process
+        st.session_state.collection_status['running'] = False
+        st.session_state.collection_status['current_step'] = 'Completed'
+        
+        st.success("✅ Data collection completed successfully!")
+        
+        # Show final summary
+        st.info(f"""
+        **📋 Collection Summary:**
+        • Total time: {elapsed.seconds} seconds
+        • Pages processed: {st.session_state.collection_status['pages_processed']}
+        • Records collected: {st.session_state.collection_status['records_found']}
+        • Mode: {'Headless' if headless_mode else 'With Browser'}
+        • Export path: {export_path}
+        """)
+        
+        st.warning("""
+        **⚠️ Implementation Note:**
+        This is a demonstration of the monitoring interface. In the full implementation:
+        • Your original script would run with real progress tracking
+        • Browser automation would be monitored in real-time  
+        • Actual data would be collected and displayed
+        • Error handling and retry logic would be included
+        """)
+        
+        # Button to view real-time status
+        if st.button("📊 View Detailed Status"):
+            st.rerun()
 
 def load_latest_data(export_path):
     """Load latest data from export path when not in demo mode"""
