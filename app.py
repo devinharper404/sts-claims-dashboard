@@ -1,24 +1,25 @@
 import streamlit as st
 import pandas as pd
+import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
-from plotly.subplots import make_subplots
-import os
-import subprocess
-import threading
+from datetime import datetime, timedelta
 import time
-from datetime import datetime
-import sys
-import io
-import random
-import numpy as np
-import socket
-from collections import defaultdict
+import statistics
+import re
+from selenium import webdriver
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.chrome.options import Options
+from selenium.common.exceptions import NoSuchElementException, TimeoutException
+import warnings
+warnings.filterwarnings('ignore')
 
-# Page config
+# Page configuration
 st.set_page_config(
     page_title="STS Claims Analytics Dashboard",
-    page_icon="📊",
+    page_icon="✈️",
     layout="wide",
     initial_sidebar_state="expanded"
 )
@@ -28,10 +29,10 @@ st.markdown("""
 <style>
     .main-header {
         font-size: 2.5rem;
-        font-weight: bold;
         color: #1f77b4;
         text-align: center;
         margin-bottom: 2rem;
+        font-weight: bold;
     }
     .metric-card {
         background-color: #f0f2f6;
@@ -40,18 +41,486 @@ st.markdown("""
         border-left: 4px solid #1f77b4;
     }
     .status-indicator {
-        display: inline-block;
-        width: 12px;
-        height: 12px;
-        border-radius: 50%;
-        margin-right: 8px;
+        padding: 0.25rem 0.5rem;
+        border-radius: 0.25rem;
+        color: white;
+        font-weight: bold;
+        text-align: center;
     }
     .status-approved { background-color: #28a745; }
     .status-denied { background-color: #dc3545; }
-    .status-open { background-color: #ffc107; }
-    .status-impasse { background-color: #6c757d; }
+    .status-pending { background-color: #ffc107; color: #000; }
+    .status-review { background-color: #17a2b8; }
+    .status-open { background-color: #6c757d; }
 </style>
 """, unsafe_allow_html=True)
+
+# Initialize session state
+if 'demo_mode' not in st.session_state:
+    st.session_state.demo_mode = True
+if 'data_collected' not in st.session_state:
+    st.session_state.data_collected = False
+if 'collected_data' not in st.session_state:
+    st.session_state.collected_data = pd.DataFrame()
+if 'collection_status' not in st.session_state:
+    st.session_state.collection_status = {
+        'running': False,
+        'current_step': '',
+        'claims_found': 0,
+        'pages_processed': 0,
+        'start_time': None,
+        'export_file': None
+    }
+
+# --- ANALYTICS FUNCTIONS FROM ORIGINAL SCRIPT ---
+
+# --- ANALYTICS FUNCTIONS FROM ORIGINAL SCRIPT ---
+
+def hhmm_to_minutes(hhmm):
+    """Convert HH:MM format to minutes"""
+    try:
+        if not hhmm:
+            return 0
+        hhmm = hhmm.replace(';', ':')
+        hours, minutes = map(int, hhmm.strip().split(':'))
+        return hours * 60 + minutes
+    except:
+        return 0
+
+def extract_emp_number(empcat):
+    """Extract employee number from emp category string"""
+    m = re.search(r'\b(\d{6})\b', empcat)
+    if m:
+        return m.group(1)
+    return empcat.strip()
+
+def relief_dollars(relief_minutes, relief_rate=320.47):
+    """Convert relief minutes to dollar amount"""
+    try:
+        return float(relief_minutes) / 60 * relief_rate
+    except (ValueError, TypeError):
+        return 0
+
+def group_subject_key(subject):
+    """Group subjects by key patterns from original script"""
+    if pd.isna(subject) or subject == '':
+        return 'Other'
+    
+    subject_str = str(subject).strip()
+    
+    # Define grouping patterns based on original script
+    if any(x in subject_str for x in ['Rest', 'rest']):
+        return 'Rest'
+    elif any(x in subject_str for x in ['11.F', '11F']):
+        return '11.F'
+    elif any(x in subject_str for x in ['Yellow Slip', '12.T', '12T']):
+        return 'Yellow Slip / 12.T'
+    elif any(x in subject_str for x in ['Green Slip', '23.Q', '23Q']):
+        return 'Green Slip / 23.Q'
+    elif any(x in subject_str for x in ['Short Call', 'Short-Call']):
+        return 'Short Call'
+    elif any(x in subject_str for x in ['Long Call', 'Long-Call']):
+        return 'Long Call'
+    elif any(x in subject_str for x in ['23.O', '23O']):
+        return '23.O'
+    elif any(x in subject_str for x in ['Deadhead', '8.D', '8D']):
+        return 'Deadhead / 8.D'
+    elif any(x in subject_str for x in ['Payback', '23.S.11', '23S11']):
+        return 'Payback Day / 23.S.11'
+    elif any(x in subject_str for x in ['White Slip', '23.P', '23P']):
+        return 'White Slip / 23.P'
+    elif any(x in subject_str for x in ['Reroute', '23.L', '23L']):
+        return 'Reroute / 23.L'
+    elif any(x in subject_str for x in ['ARCOS', '23.Z', '23Z']):
+        return 'ARCOS / 23.Z'
+    elif any(x in subject_str for x in ['Inverse', '23.R', '23R']):
+        return 'Inverse Assignment / 23.R'
+    elif any(x in subject_str for x in ['23.J', '23J']):
+        return '23.J'
+    elif any(x in subject_str for x in ['4.F', '4F']):
+        return '4.F'
+    else:
+        return 'Other'
+
+def status_canonical(status):
+    """Canonicalize status values with partial matching"""
+    if pd.isna(status) or status == '':
+        return 'unknown'
+    
+    status_str = str(status).lower().strip()
+    
+    # Use partial matching for common status values
+    if 'paid' in status_str or 'approved' in status_str:
+        return 'approved'
+    elif 'denied' in status_str or 'reject' in status_str:
+        return 'denied'
+    elif 'review' in status_str:
+        return 'in review'
+    elif 'open' in status_str:
+        return 'open'
+    elif 'pending' in status_str:
+        return 'pending'
+    elif 'impasse' in status_str:
+        return 'impasse'
+    else:
+        return status_str
+
+def calculate_comprehensive_analytics(df, relief_rate=320.47):
+    """Calculate all analytics from original script including cost analytics"""
+    # Add grouped subject and canonical status
+    df = df.copy()
+    df['Subject_Grouped'] = df['subject'].apply(group_subject_key)
+    df['Status_Canonical'] = df['status'].apply(status_canonical)
+    
+    # Ensure we have relief_dollars - either from existing column or calculate from relief_minutes
+    if 'relief_minutes' in df.columns and 'relief_dollars' not in df.columns:
+        df['Relief_Dollars'] = df['relief_minutes'].apply(lambda x: relief_dollars(x, relief_rate))
+    elif 'relief_dollars' in df.columns:
+        df['Relief_Dollars'] = df['relief_dollars']
+    else:
+        df['Relief_Dollars'] = 0
+    
+    # Get all statuses
+    all_statuses = sorted(df['Status_Canonical'].unique())
+    
+    # Subject grouped stats with dollars per status
+    subject_stats = {}
+    
+    for subject in df['Subject_Grouped'].unique():
+        subject_data = df[df['Subject_Grouped'] == subject]
+        stats = {"count": len(subject_data), "minutes": subject_data['Relief_Dollars'].sum()}
+        
+        for status in all_statuses:
+            status_data = subject_data[subject_data['Status_Canonical'] == status]
+            # Use safe key format - replace spaces with underscores
+            safe_status = status.replace(' ', '_').replace('-', '_')
+            stats[f"{safe_status}_count"] = len(status_data)
+            stats[f"{safe_status}_minutes"] = status_data['Relief_Dollars'].sum()
+            stats[f"{safe_status}_dollars"] = status_data['Relief_Dollars'].sum()
+            stats[f"{safe_status}_pct"] = (len(status_data) / len(subject_data) * 100) if len(subject_data) > 0 else 0
+            
+        subject_stats[subject] = stats
+    
+    # Calculate probability of payment by subject
+    probability_by_subject = {}
+    for subject, stats in subject_stats.items():
+        approved = stats.get("approved_count", 0)
+        denied = stats.get("denied_count", 0)
+        total_decided = approved + denied
+        probability_by_subject[subject] = approved / total_decided if total_decided > 0 else 0
+        probability_by_subject[subject] = approved / total_decided if total_decided > 0 else 0
+    
+    # Calculate average relief minutes per subject
+    avg_relief_minutes_per_subject = {}
+    for subject, stats in subject_stats.items():
+        total_cases = stats["count"]
+        avg_relief_minutes_per_subject[subject] = stats["minutes"] / total_cases if total_cases > 0 else 0
+    
+    # Calculate comprehensive cost analytics
+    cost_analytics = calculate_cost_analytics(df, subject_stats, probability_by_subject, avg_relief_minutes_per_subject, relief_rate)
+    
+    # Calculate aging forecast
+    aging_data = aging_forecast(df)
+    
+    # Calculate monthly trends
+    monthly_trends = monthly_trends_analysis(df)
+    
+    # Calculate outlier analysis
+    relief_q1 = df['Relief_Dollars'].quantile(0.25)
+    relief_q3 = df['Relief_Dollars'].quantile(0.75)
+    iqr = relief_q3 - relief_q1
+    outlier_threshold_high = relief_q3 + 1.5 * iqr
+    outlier_threshold_low = relief_q1 - 1.5 * iqr
+    
+    outlier_analysis = {
+        'high_cost_outliers': df[df['Relief_Dollars'] > outlier_threshold_high].to_dict('records'),
+        'low_cost_outliers': df[df['Relief_Dollars'] < outlier_threshold_low].to_dict('records'),
+        'outlier_threshold_high': outlier_threshold_high,
+        'outlier_threshold_low': outlier_threshold_low
+    }
+    
+    # Calculate pilots with multiple submissions
+    pilot_counts = df['pilot'].value_counts()
+    pilots_multiple_submissions = pilot_counts[pilot_counts > 1].to_dict()
+    
+    # Top 20 highest value claims
+    top_20_claims = df.nlargest(20, 'Relief_Dollars')[['case_number', 'pilot', 'subject', 'Relief_Dollars', 'status']].to_dict('records')
+    
+    return {
+        'subject_stats': subject_stats,
+        'all_statuses': all_statuses,
+        'processed_df': df,
+        'probability_by_subject': probability_by_subject,
+        'avg_relief_minutes_per_subject': avg_relief_minutes_per_subject,
+        'cost_analytics': cost_analytics,
+        'aging_forecast': aging_data,
+        'monthly_trends': monthly_trends,
+        'outlier_analysis': outlier_analysis,
+        'pilots_multiple_submissions': pilots_multiple_submissions,
+        'top_20_claims': top_20_claims,
+        'total_claims': len(df),
+        'total_relief': df['Relief_Dollars'].sum(),
+        'avg_relief': df['Relief_Dollars'].mean(),
+        'median_relief': df['Relief_Dollars'].median()
+    }
+
+def calculate_cost_analytics(df, subject_stats, probability_by_subject, avg_relief_minutes_per_subject, relief_rate):
+    """Calculate comprehensive cost analytics from original script"""
+    
+    # Filter claims by status
+    approved_claims = df[df['Status_Canonical'] == 'approved'].copy()
+    open_claims = df[df['Status_Canonical'] == 'open'].copy()
+    in_review_claims = df[df['Status_Canonical'] == 'in review'].copy()
+    
+    # Total actual paid (approved) - use Relief_Dollars column
+    total_actual_paid_cost = approved_claims['Relief_Dollars'].sum()
+    num_approved_cases = len(approved_claims)
+    avg_paid_per_case = total_actual_paid_cost / num_approved_cases if num_approved_cases > 0 else 0
+    
+    # Actual paid by pilot
+    actual_paid_by_pilot = {}
+    if len(approved_claims) > 0:
+        actual_paid_by_pilot = approved_claims.groupby('pilot')['Relief_Dollars'].sum().to_dict()
+    top20_actual_paid_by_pilot = sorted(actual_paid_by_pilot.items(), key=lambda x: x[1], reverse=True)[:20]
+    
+    # Actual paid by subject group
+    actual_paid_by_subject = {}
+    if len(approved_claims) > 0:
+        actual_paid_by_subject = approved_claims.groupby('Subject_Grouped')['Relief_Dollars'].sum().to_dict()
+    
+    # Forecasted cost by subject - fix the calculation
+    forecasted_cost_by_subject = {}
+    for subject in df['Subject_Grouped'].unique():
+        subject_data = df[df['Subject_Grouped'] == subject]
+        open_and_review = subject_data[subject_data['Status_Canonical'].isin(['open', 'in review'])]
+        
+        if len(open_and_review) > 0:
+            prob = probability_by_subject.get(subject, 0)
+            # Use average relief dollars for this subject from historical data
+            avg_relief = subject_data['Relief_Dollars'].mean() if len(subject_data) > 0 else 0
+            forecasted_cost_by_subject[subject] = len(open_and_review) * prob * avg_relief
+        else:
+            forecasted_cost_by_subject[subject] = 0
+    
+    # Top 20 forecasted by pilot
+    pilot_forecasts = {}
+    for pilot in df['pilot'].unique():
+        pilot_data = df[df['pilot'] == pilot]
+        pilot_forecasts[pilot] = _calculate_pilot_forecast(pilot_data, probability_by_subject, avg_relief_minutes_per_subject, relief_rate)
+    
+    top20_forecasted_by_pilot = sorted(pilot_forecasts.items(), key=lambda x: x[1], reverse=True)[:20]
+    
+    # Status costs
+    status_costs = df.groupby('Status_Canonical')['Relief_Dollars'].sum().to_dict()
+    status_avg_costs = df.groupby('Status_Canonical')['Relief_Dollars'].mean().to_dict()
+    
+    # Outlier cases (high cost)
+    relief_q3 = df['Relief_Dollars'].quantile(0.75)
+    relief_q1 = df['Relief_Dollars'].quantile(0.25)
+    iqr = relief_q3 - relief_q1
+    outlier_threshold = relief_q3 + 1.5 * iqr
+    outlier_cases = df[df['Relief_Dollars'] > outlier_threshold].to_dict('records')
+    
+    # Cost statistics
+    paid_costs = approved_claims['Relief_Dollars'].tolist() if len(approved_claims) > 0 else [0]
+    median_paid_cost = statistics.median(paid_costs)
+    mean_paid_cost = statistics.mean(paid_costs)
+    
+    forecasted_costs_list = list(forecasted_cost_by_subject.values())
+    median_forecasted_cost = statistics.median(forecasted_costs_list) if forecasted_costs_list else 0
+    mean_forecasted_cost = statistics.mean(forecasted_costs_list) if forecasted_costs_list else 0
+    
+    total_forecasted_cost = sum(forecasted_costs_list)
+    cost_variance = total_actual_paid_cost - total_forecasted_cost
+    variance_percentage = (cost_variance / total_forecasted_cost * 100) if total_forecasted_cost > 0 else 0
+    
+    # Top pilots by cost
+    top_pilots_by_cost = [{'pilot': pilot, 'total_cost': cost} for pilot, cost in top20_actual_paid_by_pilot]
+    
+    return {
+        'total_actual_cost': total_actual_paid_cost,
+        'total_forecasted_cost': total_forecasted_cost,
+        'cost_variance': cost_variance,
+        'variance_percentage': variance_percentage,
+        'top_pilots_by_cost': top_pilots_by_cost,
+        'cost_by_status': status_costs,
+        'forecasted_cost_by_subject': forecasted_cost_by_subject,
+        'cost_statistics': {
+            'mean_cost': mean_paid_cost,
+            'median_cost': median_paid_cost,
+            'min_cost': df['relief_dollars'].min(),
+            'max_cost': df['relief_dollars'].max(),
+            'std_cost': df['relief_dollars'].std(),
+            'cost_variance_stat': df['relief_dollars'].var()
+        },
+        'total_actual_paid_cost': total_actual_paid_cost,
+        'num_approved_cases': num_approved_cases,
+        'avg_paid_per_case': avg_paid_per_case,
+        'top20_actual_paid_by_pilot': top20_actual_paid_by_pilot,
+        'actual_paid_by_subject': actual_paid_by_subject,
+        'top20_forecasted_by_pilot': top20_forecasted_by_pilot,
+        'status_costs': status_costs,
+        'status_avg_costs': status_avg_costs,
+        'outlier_cases': outlier_cases,
+        'median_paid_cost': median_paid_cost,
+        'mean_paid_cost': mean_paid_cost,
+        'median_forecasted_cost': median_forecasted_cost,
+        'mean_forecasted_cost': mean_forecasted_cost
+    }
+
+def _calculate_pilot_forecast(pilot_data, probability_by_subject, avg_relief_minutes_per_subject, relief_rate):
+    """Helper function to calculate forecasted cost for a pilot"""
+    total_forecast = 0
+    for _, row in pilot_data.iterrows():
+        if row['Status_Canonical'] in ['open', 'in review']:
+            subject = row['Subject_Grouped']
+            prob = probability_by_subject.get(subject, 0)
+            # Use the average relief for this subject from all data
+            avg_relief = pilot_data[pilot_data['Subject_Grouped'] == subject]['Relief_Dollars'].mean()
+            if pd.isna(avg_relief):
+                avg_relief = 0
+            total_forecast += prob * avg_relief
+    return total_forecast
+
+def aging_forecast(df):
+    """Generate aging forecast analysis"""
+    try:
+        current_date = datetime.now()
+        aging_data = []
+        
+        for _, row in df.iterrows():
+            if pd.isna(row.get('decision_date')) or row.get('decision_date') == '':
+                # Case is still open, calculate aging
+                submission_date = pd.to_datetime(row['submission_date'])
+                days_old = (current_date - submission_date).days
+                
+                # Predict likely decision timeframe based on subject and status
+                subject_avg_days = {
+                    'Rest': 45, '11.F': 60, 'Yellow Slip / 12.T': 30, 'Green Slip / 23.Q': 35,
+                    'Short Call': 25, 'Long Call': 35, '23.O': 40, 'Deadhead / 8.D': 30,
+                    'Payback Day / 23.S.11': 50, 'White Slip / 23.P': 35, 'Reroute / 23.L': 40,
+                    'ARCOS / 23.Z': 45, 'Inverse Assignment / 23.R': 55, '23.J': 40, '4.F': 35,
+                    'Other': 60
+                }
+                
+                subject_grouped = group_subject_key(row.get('subject', ''))
+                expected_days = subject_avg_days.get(subject_grouped, 60)
+                estimated_decision_date = submission_date + timedelta(days=expected_days)
+                
+                aging_data.append({
+                    'case_number': row.get('case_number', ''),
+                    'pilot': row.get('pilot', ''),
+                    'subject': row.get('subject', ''),
+                    'days_old': days_old,
+                    'estimated_decision_date': estimated_decision_date,
+                    'status': row.get('status', ''),
+                    'relief_dollars': row.get('relief_dollars', 0)
+                })
+        
+        return pd.DataFrame(aging_data)
+    
+    except Exception as e:
+        print(f"Error in aging_forecast: {e}")
+        return pd.DataFrame()
+
+def monthly_trends_analysis(df):
+    """Analyze monthly trends in claims data"""
+    try:
+        # Convert submission_date to datetime
+        df['submission_date'] = pd.to_datetime(df['submission_date'])
+        df['month_year'] = df['submission_date'].dt.to_period('M')
+        
+        # Monthly submission trends
+        monthly_submissions = df.groupby('month_year').size()
+        
+        # Monthly cost trends
+        monthly_costs = df.groupby('month_year')['relief_dollars'].sum()
+        
+        # Monthly approval rates
+        approved_cases = df[df['status'].str.contains('approved|paid', case=False, na=False)]
+        monthly_approvals = approved_cases.groupby('month_year').size()
+        monthly_approval_rates = (monthly_approvals / monthly_submissions * 100).fillna(0)
+        
+        return {
+            'submissions_by_month': {str(k): v for k, v in monthly_submissions.to_dict().items()},
+            'cost_by_month': {str(k): v for k, v in monthly_costs.to_dict().items()},
+            'approval_rates_by_month': {str(k): v for k, v in monthly_approval_rates.to_dict().items()}
+        }
+    
+    except Exception as e:
+        print(f"Error in monthly_trends_analysis: {e}")
+        return {}
+
+def generate_demo_data():
+    """Generate comprehensive demo data for testing"""
+    np.random.seed(42)  # For consistent demo data
+    
+    # Create demo data with realistic patterns
+    n_claims = 150
+    pilots = ['Alpha', 'Beta', 'Gamma', 'Delta', 'Echo', 'Foxtrot', 'Golf', 'Hotel', 'India', 'Juliet']
+    subjects = ['Rest', '11.F', 'Yellow Slip / 12.T', 'Green Slip / 23.Q', 'Short Call', 'Long Call', '23.O', 'Deadhead / 8.D', 'Payback Day / 23.S.11', 'White Slip / 23.P']
+    
+    # Realistic status distribution - ensure we have decided cases for probability calculations
+    statuses = ['approved', 'denied', 'in review', 'open', 'pending']
+    status_weights = [0.35, 0.25, 0.15, 0.15, 0.10]  # 35% approved, 25% denied, etc.
+    
+    data = []
+    for i in range(n_claims):
+        # Create some pilots with multiple cases
+        if i < 30:  # First 30 claims use repeating pilots for multi-case scenarios
+            pilot = pilots[i % 5]  # Use first 5 pilots repeatedly
+        else:
+            pilot = np.random.choice(pilots)
+        
+        # Generate realistic financial data
+        relief_amount = np.random.lognormal(6, 1.2) * 100  # Log-normal for realistic money distribution
+        
+        # Weighted status selection for realistic distributions
+        status = np.random.choice(statuses, p=status_weights)
+        
+        # Generate dates
+        submission_date = datetime.now() - timedelta(days=np.random.randint(1, 365))
+        
+        # Only generate decision date for approved/denied cases
+        if status in ['approved', 'denied']:
+            decision_date = submission_date + timedelta(days=np.random.randint(30, 180))
+        else:
+            decision_date = None
+        
+        # Generate subject with some bias toward certain types having higher approval rates
+        subject = np.random.choice(subjects)
+        
+        # Adjust approval probability based on subject type (realistic patterns)
+        if status in ['approved', 'denied'] and subject in ['Rest', 'Short Call', 'Yellow Slip / 12.T']:
+            # These subjects have higher approval rates in real data
+            if np.random.random() < 0.7:  # 70% chance to be approved
+                status = 'approved'
+            else:
+                status = 'denied'
+        
+        data.append({
+            'case_number': f'STS-{2024}-{i+1:04d}',
+            'pilot': pilot,
+            'subject': subject,
+            'status': status,
+            'relief_dollars': relief_amount,
+            'submission_date': submission_date.strftime('%Y-%m-%d'),
+            'decision_date': decision_date.strftime('%Y-%m-%d') if decision_date else '',
+            'processing_days': (decision_date - submission_date).days if decision_date else None,
+            'violation_type': np.random.choice(['Type A', 'Type B', 'Type C', 'Type D']),
+            'probability_of_payment': np.random.uniform(0.1, 0.9)
+        })
+    
+    return pd.DataFrame(data)
+
+def get_data():
+    """Get the current data from session state or demo data"""
+    if st.session_state.get('demo_mode', True):
+        return generate_demo_data()
+    else:
+        return st.session_state.get('collected_data', pd.DataFrame())
+
+# --- DASHBOARD FUNCTIONS ---
 
 def check_password():
     """Returns `True` if the user had the correct password."""
@@ -86,139 +555,612 @@ def check_password():
     else:
         return True
 
+def show_overview_tab():
+    """Display overview analytics"""
+    st.subheader("📈 Overview Analytics")
+    
+    # Get data
+    df = get_data()
+    if df.empty:
+        st.warning("No data available. Please collect data or enable demo mode.")
+        return
+    
+    try:
+        analytics = calculate_comprehensive_analytics(df)
+        
+        # Key metrics
+        col1, col2, col3, col4 = st.columns(4)
+        
+        with col1:
+            st.metric("Total Claims", analytics['total_claims'])
+        with col2:
+            st.metric("Total Relief Value", f"${analytics['total_relief']:,.2f}")
+        with col3:
+            st.metric("Average Relief", f"${analytics['avg_relief']:,.2f}")
+        with col4:
+            st.metric("Median Relief", f"${analytics['median_relief']:,.2f}")
+        
+        # Status distribution
+        st.subheader("📊 Claims Status Distribution")
+        if analytics['processed_df'] is not None:
+            status_counts = analytics['processed_df']['Status_Canonical'].value_counts()
+            fig = px.pie(values=status_counts.values, names=status_counts.index, 
+                        title="Claims by Status")
+            st.plotly_chart(fig, use_container_width=True)
+        
+        # Pilots with multiple submissions
+        if analytics['pilots_multiple_submissions']:
+            st.subheader("👥 Pilots with Multiple Submissions")
+            pilots_multi_df = pd.DataFrame(list(analytics['pilots_multiple_submissions'].items()), 
+                                         columns=['Pilot', 'Number of Claims'])
+            pilots_multi_df = pilots_multi_df.sort_values('Number of Claims', ascending=False)
+            
+            col1, col2 = st.columns([1, 1])
+            with col1:
+                st.dataframe(pilots_multi_df, use_container_width=True)
+            with col2:
+                fig = px.bar(pilots_multi_df.head(10), x='Pilot', y='Number of Claims',
+                           title="Top 10 Pilots by Number of Claims")
+                fig.update_xaxes(tickangle=45)
+                st.plotly_chart(fig, use_container_width=True)
+        
+    except Exception as e:
+        st.error(f"Error displaying overview: {str(e)}")
+
+def show_analytics_tab():
+    """Display detailed analytics"""
+    st.subheader("📊 Detailed Analytics")
+    
+    df = get_data()
+    if df.empty:
+        st.warning("No data available for analytics.")
+        return
+    
+    try:
+        analytics = calculate_comprehensive_analytics(df)
+        
+        # Top 20 highest value claims
+        st.subheader("🏆 Top 20 Highest Value Claims")
+        if analytics['top_20_claims']:
+            top_claims_df = pd.DataFrame(analytics['top_20_claims'])
+            st.dataframe(top_claims_df, use_container_width=True)
+            
+            # Chart for top 10
+            fig = px.bar(top_claims_df.head(10), x='case_number', y='relief_dollars',
+                        title="Top 10 Claims by Relief Value", hover_data=['pilot', 'subject'])
+            fig.update_xaxes(tickangle=45)
+            st.plotly_chart(fig, use_container_width=True)
+        
+        # Subject analysis
+        st.subheader("📋 Subject Violation Analysis")
+        if analytics['subject_stats']:
+            subject_summary = []
+            for subject, stats in analytics['subject_stats'].items():
+                subject_summary.append({
+                    'Subject': subject,
+                    'Total Cases': stats['count'],
+                    'Total Relief ($)': stats['minutes'],
+                    'Approved Cases': stats.get('approved_count', 0),
+                    'Denied Cases': stats.get('denied_count', 0),
+                    'Approval Rate (%)': round(stats.get('approved_pct', 0), 1)
+                })
+            
+            subject_df = pd.DataFrame(subject_summary)
+            subject_df = subject_df.sort_values('Total Relief ($)', ascending=False)
+            st.dataframe(subject_df, use_container_width=True)
+            
+            # Subject distribution chart
+            fig = px.bar(subject_df.head(10), x='Subject', y='Total Relief ($)',
+                        title="Top 10 Subjects by Total Relief Value")
+            fig.update_xaxes(tickangle=45)
+            st.plotly_chart(fig, use_container_width=True)
+        
+        # Outlier analysis
+        if analytics.get('outlier_analysis') and analytics['outlier_analysis'].get('high_cost_outliers'):
+            st.subheader("🔍 High Cost Outlier Analysis")
+            outliers = analytics['outlier_analysis']['high_cost_outliers']
+            if outliers:
+                outliers_df = pd.DataFrame(outliers)
+                st.dataframe(outliers_df[['case_number', 'pilot', 'subject', 'relief_dollars', 'status']], 
+                           use_container_width=True)
+        
+        # Monthly trends
+        if analytics.get('monthly_trends'):
+            st.subheader("📈 Monthly Trends")
+            monthly_data = analytics['monthly_trends']
+            
+            if monthly_data.get('cost_by_month'):
+                months = list(monthly_data['cost_by_month'].keys())
+                costs = list(monthly_data['cost_by_month'].values())
+                
+                fig = px.line(x=months, y=costs, title="Monthly Cost Trends",
+                             labels={'x': 'Month', 'y': 'Total Cost ($)'})
+                fig.update_xaxes(tickangle=45)
+                st.plotly_chart(fig, use_container_width=True)
+        
+    except Exception as e:
+        st.error(f"Error displaying analytics: {str(e)}")
+
+def show_financial_tab():
+    """Display financial analytics"""
+    st.subheader("💰 Financial Analytics")
+    
+    df = get_data()
+    if df.empty:
+        st.warning("No data available for financial analytics.")
+        return
+    
+    try:
+        analytics = calculate_comprehensive_analytics(df)
+        cost_data = analytics.get('cost_analytics', {})
+        
+        if not cost_data:
+            st.error("Cost analytics data not available.")
+            return
+        
+        # Debug information
+        with st.expander("🔍 Debug Information", expanded=False):
+            st.write("**Data Summary:**")
+            st.write(f"- Total rows in data: {len(df)}")
+            st.write(f"- Status distribution: {df['status'].value_counts().to_dict()}")
+            if 'Status_Canonical' in df.columns:
+                st.write(f"- Canonical status distribution: {df['Status_Canonical'].value_counts().to_dict()}")
+            
+            st.write("**Probability Calculations:**")
+            prob_data = analytics.get('probability_by_subject', {})
+            for subject, prob in prob_data.items():
+                st.write(f"- {subject}: {prob:.2%}")
+            
+            st.write("**Forecasting Data:**")
+            forecast_data = cost_data.get('forecasted_cost_by_subject', {})
+            for subject, forecast in forecast_data.items():
+                st.write(f"- {subject}: ${forecast:,.2f}")
+        
+        # Financial overview
+        col1, col2, col3, col4 = st.columns(4)
+        
+        with col1:
+            st.metric("Total Actual Cost", f"${cost_data.get('total_actual_cost', 0):,.2f}")
+        with col2:
+            st.metric("Total Forecasted Cost", f"${cost_data.get('total_forecasted_cost', 0):,.2f}")
+        with col3:
+            variance = cost_data.get('cost_variance', 0)
+            st.metric("Cost Variance", f"${variance:,.2f}")
+        with col4:
+            variance_pct = cost_data.get('variance_percentage', 0)
+            st.metric("Variance %", f"{variance_pct:.1f}%")
+        
+        # Top pilots by cost
+        if cost_data.get('top_pilots_by_cost'):
+            st.subheader("🏆 Top Pilots by Cost")
+            pilots_df = pd.DataFrame(cost_data['top_pilots_by_cost'])
+            st.dataframe(pilots_df.head(20), use_container_width=True)
+            
+            # Chart
+            if len(pilots_df) >= 10:
+                fig = px.bar(pilots_df.head(10), x='pilot', y='total_cost',
+                            title="Top 10 Pilots by Total Cost")
+                fig.update_xaxes(tickangle=45)
+                st.plotly_chart(fig, use_container_width=True)
+        
+        # Forecasted cost by subject
+        if cost_data.get('forecasted_cost_by_subject'):
+            st.subheader("🎯 Forecasted Cost by Subject")
+            forecast_data = cost_data['forecasted_cost_by_subject']
+            if any(v > 0 for v in forecast_data.values()):
+                forecast_df = pd.DataFrame(list(forecast_data.items()), 
+                                         columns=['Subject', 'Forecasted Cost'])
+                forecast_df = forecast_df[forecast_df['Forecasted Cost'] > 0]
+                forecast_df = forecast_df.sort_values('Forecasted Cost', ascending=False)
+                
+                st.dataframe(forecast_df, use_container_width=True)
+                
+                # Chart
+                if len(forecast_df) >= 5:
+                    fig = px.bar(forecast_df.head(10), x='Subject', y='Forecasted Cost',
+                                title="Forecasted Cost by Subject")
+                    fig.update_xaxes(tickangle=45)
+                    st.plotly_chart(fig, use_container_width=True)
+            else:
+                st.info("No forecasted costs available (no open/review cases or zero probabilities)")
+        
+        # Cost by status
+        if cost_data.get('cost_by_status'):
+            st.subheader("📊 Cost Distribution by Status")
+            status_costs = cost_data['cost_by_status']
+            
+            fig = px.pie(values=list(status_costs.values()), names=list(status_costs.keys()),
+                        title="Cost Distribution by Status")
+            st.plotly_chart(fig, use_container_width=True)
+        
+    except Exception as e:
+        st.error(f"Error displaying financial analytics: {str(e)}")
+
+def show_claims_details_tab():
+    """Display detailed claims data"""
+    st.subheader("📋 Claims Details")
+    
+    df = get_data()
+    if df.empty:
+        st.warning("No data available.")
+        return
+    
+    # Display raw data with filters
+    st.subheader("🔍 Filter Claims")
+    
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        status_filter = st.selectbox("Filter by Status", 
+                                   options=['All'] + list(df['status'].unique()))
+    
+    with col2:
+        pilot_filter = st.selectbox("Filter by Pilot", 
+                                  options=['All'] + list(df['pilot'].unique()))
+    
+    with col3:
+        min_relief = st.number_input("Minimum Relief Amount", value=0.0, step=100.0)
+    
+    # Apply filters
+    filtered_df = df.copy()
+    
+    if status_filter != 'All':
+        filtered_df = filtered_df[filtered_df['status'] == status_filter]
+    
+    if pilot_filter != 'All':
+        filtered_df = filtered_df[filtered_df['pilot'] == pilot_filter]
+    
+    filtered_df = filtered_df[filtered_df['relief_dollars'] >= min_relief]
+    
+    st.write(f"Showing {len(filtered_df)} of {len(df)} claims")
+    st.dataframe(filtered_df, use_container_width=True)
+    
+    # Export functionality
+    if st.button("Export Filtered Data to CSV"):
+        csv = filtered_df.to_csv(index=False)
+        st.download_button(
+            label="Download CSV",
+            data=csv,
+            file_name=f"sts_claims_filtered_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+            mime="text/csv"
+        )
+
+def scrape_sts_data():
+    """Scrape STS data with comprehensive monitoring"""
+    if st.session_state.collection_status['running']:
+        st.warning("Data collection is already in progress.")
+        return False
+    
+    # Initialize collection status
+    st.session_state.collection_status = {
+        'running': True,
+        'current_step': 'Initializing...',
+        'claims_found': 0,
+        'pages_processed': 0,
+        'start_time': datetime.now(),
+        'export_file': None
+    }
+    
+    # UI for monitoring
+    st.subheader("📊 Data Collection Progress")
+    progress_bar = st.progress(0)
+    status_text = st.empty()
+    
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        claims_metric = st.empty()
+    with col2:
+        pages_metric = st.empty()
+    with col3:
+        time_metric = st.empty()
+    
+    try:
+        # Setup Chrome options
+        chrome_options = Options()
+        chrome_options.add_argument("--headless")
+        chrome_options.add_argument("--no-sandbox")
+        chrome_options.add_argument("--disable-dev-shm-usage")
+        chrome_options.add_argument("--disable-gpu")
+        chrome_options.add_argument("--window-size=1920,1080")
+        
+        st.session_state.collection_status['current_step'] = 'Starting browser...'
+        status_text.text("Starting browser...")
+        
+        driver = webdriver.Chrome(options=chrome_options)
+        # Updated URL to match working script
+        driver.get("https://sts2.alpa.org/adfs/ls/?wa=wsignin1.0&wtrealm=https%3a%2f%2fdal.alpa.org&wctx=rm%3d0%26id%3d65788f3a-90df-4c13-b375-f2e8ad524a11%26ru%3d%252fsts-admin&wct=2025-07-11T11%3a52%3a42Z&whr=https%3a%2f%2fdal.alpa.org&cfg=6")
+        time.sleep(3)
+        
+        # Wait for login elements - updated IDs to match working script
+        st.session_state.collection_status['current_step'] = 'Waiting for login page...'
+        status_text.text("Waiting for login page...")
+        
+        wait = WebDriverWait(driver, 20)
+        username_input = wait.until(EC.presence_of_element_located((By.ID, "userNameInput")))
+        password_input = driver.find_element(By.ID, "passwordInput")
+        login_button = driver.find_element(By.ID, "submitButton")
+        
+        # Login credentials - updated to match working script
+        username_input.send_keys("N0000937")
+        password_input.send_keys("STSD@L!42AlPa14")
+        
+        st.session_state.collection_status['current_step'] = 'Logging in...'
+        status_text.text("Logging in...")
+        
+        login_button.click()
+        time.sleep(5)
+        
+        # Navigate to claims page after login
+        driver.get("https://dal.alpa.org/sts-admin/claims")
+        
+        # Wait for page to load and set up filters like in working script
+        st.session_state.collection_status['current_step'] = 'Setting up filters...'
+        status_text.text("Setting up filters...")
+        
+        # Click Sort & Filter button
+        sort_filter_button = wait.until(EC.element_to_be_clickable((By.XPATH, "/html/body/form/div[3]/div/div/div/div/div/div/main/div[1]/div[1]/div[2]/div[1]/div/div[2]/button[2]")))
+        driver.execute_script("arguments[0].scrollIntoView(true);", sort_filter_button)
+        sort_filter_button.click()
+        time.sleep(2)
+        
+        # Click Add All button
+        try:
+            add_all_button = wait.until(EC.element_to_be_clickable((By.XPATH, "/html/body/form/div[3]/div/div/div/div/div/div/main/div[1]/div[1]/div[2]/div[6]/div[1]/div[1]/div/div[3]/div/div/div[1]/fieldset/div[4]/button[1]")))
+            driver.execute_script("arguments[0].scrollIntoView(true);", add_all_button)
+            add_all_button.click()
+            time.sleep(1)
+        except Exception as e:
+            st.warning(f"Could not click 'Add All': {e}")
+        
+        # Click Apply button
+        try:
+            apply_button = wait.until(EC.element_to_be_clickable((By.XPATH, "/html/body/form/div[3]/div/div/div/div/div/div/main/div[1]/div[1]/div[2]/div[6]/div[1]/div[2]/div[2]/button[2]")))
+            driver.execute_script("arguments[0].scrollIntoView(true);", apply_button)
+            apply_button.click()
+            time.sleep(2)
+        except Exception as e:
+            st.warning(f"Could not click 'Apply': {e}")
+        
+        time.sleep(5)
+        
+        # Set results per page to 50
+        try:
+            per_page_dropdown = wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "select.form-select")))
+            driver.execute_script("arguments[0].scrollIntoView(true);", per_page_dropdown)
+            if per_page_dropdown.get_attribute("value") != "50":
+                per_page_dropdown.click()
+                option_50 = per_page_dropdown.find_element(By.XPATH, ".//option[@value='50']")
+                option_50.click()
+                time.sleep(3)
+        except Exception as e:
+            st.warning(f"Could not set results per page to 50: {e}")
+        
+        # Wait for dashboard - updated to match new structure
+        wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "table tbody tr")))
+        
+        # Start collecting ticket URLs like in working script
+        st.session_state.collection_status['current_step'] = 'Collecting ticket URLs...'
+        status_text.text("Collecting ticket URLs...")
+        
+        all_tickets = []
+        processed_tickets = set()
+        
+        # Collect data from all pages
+        claims_data = []
+        page_num = 1
+        consecutive_errors = 0
+        max_consecutive_errors = 3
+        
+        while True:
+            try:
+                st.session_state.collection_status['current_step'] = f'Processing page {page_num}...'
+                st.session_state.collection_status['pages_processed'] = page_num
+                status_text.text(f"Processing page {page_num}...")
+                pages_metric.metric("Pages Processed", page_num)
+                
+                # Get table data with retry logic
+                table = wait.until(EC.presence_of_element_located((By.ID, "claimsTable")))
+                rows = table.find_elements(By.TAG_NAME, "tr")[1:]  # Skip header
+                
+                page_claims = 0
+                for row in rows:
+                    try:
+                        cells = row.find_elements(By.TAG_NAME, "td")
+                        if len(cells) >= 6:  # Minimum required columns
+                            # More flexible column extraction
+                            case_number = cells[0].text.strip() if len(cells) > 0 else ''
+                            pilot = cells[1].text.strip() if len(cells) > 1 else ''
+                            subject = cells[2].text.strip() if len(cells) > 2 else ''
+                            status = cells[3].text.strip() if len(cells) > 3 else ''
+                            submission_date = cells[4].text.strip() if len(cells) > 4 else ''
+                            decision_date = cells[5].text.strip() if len(cells) > 5 else ''
+                            
+                            # Try to get relief minutes - more robust parsing
+                            relief_minutes = 0
+                            if len(cells) > 6:
+                                try:
+                                    relief_text = cells[6].text.strip()
+                                    if relief_text and relief_text not in ['', '-', 'N/A']:
+                                        relief_minutes = float(relief_text.replace(',', ''))
+                                except (ValueError, AttributeError):
+                                    relief_minutes = 0
+                            
+                            processing_days = cells[7].text.strip() if len(cells) > 7 else ''
+                            
+                            # Only include claims with positive relief
+                            if relief_minutes > 0 and case_number:
+                                claims_data.append({
+                                    'case_number': case_number,
+                                    'pilot': pilot,
+                                    'subject': subject,
+                                    'status': status,
+                                    'submission_date': submission_date,
+                                    'decision_date': decision_date,
+                                    'relief_minutes': relief_minutes,
+                                    'relief_dollars': relief_dollars(relief_minutes),
+                                    'processing_days': processing_days
+                                })
+                                page_claims += 1
+                    except Exception as e:
+                        # Log individual row errors but continue
+                        continue
+                
+                st.session_state.collection_status['claims_found'] = len(claims_data)
+                claims_metric.metric("Claims Found", len(claims_data))
+                
+                # Dynamic progress calculation
+                if page_num <= 5:
+                    estimated_total_pages = 65  # Initial estimate
+                else:
+                    # Better estimate based on claims per page
+                    avg_claims_per_page = len(claims_data) / page_num
+                    if avg_claims_per_page > 0:
+                        estimated_total_pages = min(max(50, page_num + 10), 100)  # Reasonable bounds
+                    else:
+                        estimated_total_pages = page_num + 5
+                
+                progress = min(page_num / estimated_total_pages, 0.95)  # Never show 100% until done
+                progress_bar.progress(progress)
+                
+                # Reset error counter on successful page
+                consecutive_errors = 0
+                
+                # Check for next page
+                try:
+                    next_button = driver.find_element(By.XPATH, "//a[contains(@class, 'ui-paginator-next')]")
+                    if "ui-state-disabled" in next_button.get_attribute("class"):
+                        break
+                    next_button.click()
+                    time.sleep(2)  # Increased wait time for page load
+                    page_num += 1
+                except Exception as nav_error:
+                    # No more pages available
+                    break
+                    
+            except Exception as page_error:
+                consecutive_errors += 1
+                st.warning(f"⚠️ Error on page {page_num}: {str(page_error)}")
+                
+                if consecutive_errors >= max_consecutive_errors:
+                    st.error(f"❌ Too many consecutive errors ({consecutive_errors}). Stopping collection.")
+                    break
+                else:
+                    # Try to continue to next page
+                    try:
+                        page_num += 1
+                        time.sleep(3)  # Wait longer before retry
+                        continue
+                    except:
+                        break
+        
+        driver.quit()
+        
+        # Save data with validation
+        if claims_data:
+            df = pd.DataFrame(claims_data)
+            
+            # Data validation
+            st.info(f"📊 **Collection Summary:**")
+            st.write(f"- Total pages processed: {page_num}")
+            st.write(f"- Total claims found: {len(claims_data)}")
+            st.write(f"- Claims with relief > 0: {len(df[df['relief_minutes'] > 0])}")
+            st.write(f"- Date range: {df['submission_date'].min()} to {df['submission_date'].max()}")
+            st.write(f"- Status distribution: {df['status'].value_counts().head().to_dict()}")
+            
+            # Save to CSV
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            filename = f'sts_claims_data_{timestamp}.csv'
+            df.to_csv(filename, index=False)
+            
+            # Store in session state
+            st.session_state.collected_data = df
+            st.session_state.data_collected = True
+            st.session_state.collection_status['export_file'] = filename
+            
+            st.success(f"✅ Data collection completed successfully!")
+            st.info(f"📁 Data saved to: {filename}")
+        else:
+            st.warning("⚠️ No claims data collected. This might indicate:")
+            st.write("- All claims have 0 relief minutes")
+            st.write("- Website structure has changed") 
+            st.write("- Network or login issues")
+            return False
+        
+        st.session_state.collection_status['running'] = False
+        progress_bar.progress(1.0)
+        
+        # Final metrics
+        elapsed_total = datetime.now() - st.session_state.collection_status['start_time']
+        time_metric.metric("Total Time", f"{elapsed_total.seconds}s")
+        
+        return True
+        
+    except Exception as e:
+        if 'driver' in locals():
+            driver.quit()
+        
+        st.session_state.collection_status['running'] = False
+        st.session_state.collection_status['current_step'] = f'Error: {str(e)}'
+        status_text.text(f"Error: {str(e)}")
+        st.error(f"❌ Data collection failed: {e}")
+        
+        return False
+
 def main():
-    # Authentication check
+    """Main dashboard application"""
+    
+    # Check password first
     if not check_password():
         return
-        
-    st.markdown('<h1 class="main-header">STS Claims Analytics Dashboard</h1>', unsafe_allow_html=True)
     
-    # Initialize demo data if no data exists and demo mode is enabled
-    if 'claims_data' not in st.session_state and st.session_state.get('demo_mode', True):
-        load_demo_data()
+    # Header
+    st.markdown('<h1 class="main-header">✈️ STS Claims Analytics Dashboard</h1>', unsafe_allow_html=True)
     
-    # Sidebar
+    # Sidebar controls
     with st.sidebar:
-        st.header("🔧 Control Panel")
-        
-        # Sharing information
-        st.markdown("---")
-        st.subheader("🌐 Share Dashboard")
-        
-        try:
-            # Get local IP for sharing
-            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            s.connect(("8.8.8.8", 80))
-            local_ip = s.getsockname()[0]
-            s.close()
-            
-            share_url = f"http://{local_ip}:8501"
-            st.success("**Share this URL:**")
-            st.code(share_url, language="text")
-            st.info("💡 Works for team members on the same network")
-            
-            if st.button("📋 Copy URL"):
-                st.write("URL copied! (Manually copy the URL above)")
-                
-        except:
-            st.warning("Run with network access to get shareable URL")
-            
-        st.markdown("**For public access:** See DEPLOYMENT_GUIDE.md")
-        
-        st.markdown("---")
+        st.header("🎛️ Dashboard Controls")
         
         # Demo mode toggle
-        demo_mode = st.toggle("Demo Mode", value=True, help="Use sample data for testing")
-        
-        # Update session state based on toggle
+        demo_mode = st.toggle("Demo Mode", value=st.session_state.get('demo_mode', True))
         st.session_state.demo_mode = demo_mode
         
         if demo_mode:
-            st.info("🎯 **Demo Mode**: Using sample data for demonstration purposes")
-            
-            # Small hint for demo password (less prominent)
-            with st.expander("ℹ️ Demo Access Info"):
-                st.write("**Demo Password:** `STS2025Dashboard!`")
-                st.write("*This is for demonstration purposes only*")
-            
-            if st.button("🔄 Refresh Demo Data"):
-                load_demo_data()
-            
-            # Export section for demo mode
-            if 'claims_data' in st.session_state and len(st.session_state.claims_data) > 0:
-                st.markdown("---")
-                st.subheader("📥 Export Data")
-                export_data()
+            st.info("📊 **Demo Mode Active**\n\nUsing sample data for demonstration.")
         else:
-            # Configuration section
-            st.subheader("Configuration")
-            relief_rate = st.number_input("Relief Rate ($/hour)", value=320.47, step=0.01)
-            export_path = st.text_input("Export Path", value="", placeholder="C:\\path\\to\\your\\export\\folder")
+            st.info("🔴 **Production Mode**\n\nReady for live data collection.")
+        
+        st.divider()
+        
+        # Data collection section (only in production mode)
+        if not demo_mode:
+            st.header("📥 Data Collection")
             
-            # Authentication section
-            st.subheader("Authentication")
-            username = st.text_input("Username", value="", placeholder="Enter your username")
-            password = st.text_input("Password", type="password", value="", placeholder="Enter your password")
-            
-            # Run options
-            st.subheader("Run Options")
-            headless_mode = st.checkbox("Run in headless mode", value=False)
-            max_pages = st.number_input("Max pages to scrape (0 = all)", value=0, min_value=0)
-            
-            # Store configuration in session state for persistence
-            st.session_state.relief_rate = relief_rate
-            st.session_state.export_path = export_path
-            st.session_state.username = username
-            st.session_state.password = password
-            st.session_state.headless_mode = headless_mode
-            st.session_state.max_pages = max_pages
-            
-            # Configuration validation
-            config_valid = True
-            config_issues = []
-            
-            if not export_path:
-                config_issues.append("Export Path is required")
-                config_valid = False
-            if not username:
-                config_issues.append("Username is required")
-                config_valid = False
-            if not password:
-                config_issues.append("Password is required")
-                config_valid = False
-            
-            if config_issues:
-                st.warning("⚠️ Configuration Issues:")
-                for issue in config_issues:
-                    st.write(f"• {issue}")
+            if not st.session_state.get('data_collected', False):
+                st.warning("⚠️ No data collected yet")
+                if st.button("🚀 Start Data Collection", type="primary"):
+                    scrape_sts_data()
             else:
-                st.success("✅ Configuration Complete")
-            
-            # Test connection button
-            if st.button("🔍 Test Data Source Connection"):
-                if not config_valid:
-                    st.error("Please complete configuration before testing connection.")
-                else:
-                    test_data_source_connection(username, password, export_path)
-            
-            # Action buttons
-            col1, col2 = st.columns(2)
-            with col1:
-                if st.button("🚀 Start Data Collection", type="primary", disabled=not config_valid):
-                    if config_valid:
-                        run_data_collection(relief_rate, export_path, username, password, headless_mode, max_pages)
-                    else:
-                        st.error("Please complete all required configuration fields.")
-            
-            with col2:
-                if st.button("📊 Load Latest Data", disabled=not export_path):
-                    if export_path:
-                        load_latest_data(export_path)
-                    else:
-                        st.error("Please provide an export path.")
+                st.success("✅ Data collected successfully")
+                df = st.session_state.get('collected_data', pd.DataFrame())
+                st.metric("Claims Collected", len(df))
+                
+                if st.button("🔄 Refresh Data"):
+                    scrape_sts_data()
+        
+        st.divider()
+        
+        # Data info
+        df = get_data()
+        if not df.empty:
+            st.header("📊 Current Data")
+            st.metric("Total Claims", len(df))
+            # Use consistent column name
+            relief_col = 'relief_dollars' if 'relief_dollars' in df.columns else 'Relief_Dollars'
+            if relief_col in df.columns:
+                st.metric("Total Relief Value", f"${df[relief_col].sum():,.2f}")
     
     # Main content tabs
-    tab1, tab2, tab3, tab4, tab5 = st.tabs(["📈 Overview", "📊 Analytics", "💰 Financial", "📋 Claims Details", "🔄 Real-time Status"])
+    tab1, tab2, tab3, tab4 = st.tabs(["📈 Overview", "📊 Analytics", "💰 Financial", "📋 Claims Details"])
     
     with tab1:
         show_overview_tab()
@@ -231,1414 +1173,6 @@ def main():
     
     with tab4:
         show_claims_details_tab()
-    
-    with tab5:
-        show_realtime_status_tab()
 
-def relief_dollars(minutes, relief_rate=320.47):
-    """Calculate relief dollars from minutes"""
-    return (minutes / 60) * relief_rate if minutes else 0
-
-def group_subject_key(violation):
-    """Group violations into categories (from original script)"""
-    if pd.isna(violation) or not violation:
-        return "Unknown"
-        
-    v = str(violation).lower()
-    if 'rest' in v:
-        return 'Rest'
-    if any(x in v for x in ['12.t', 'yellow slip', '12t', 'ys']):
-        return 'Yellow Slip / 12.T'
-    if any(x in v for x in ['11.f', '11f']):
-        return '11.F'
-    if any(x in v for x in ['payback day', '23.s.11', '23s11']):
-        return 'Payback Day / 23.S.11'
-    if any(x in v for x in ['23.q', '23q', 'green slip', 'gs']):
-        return 'Green Slip / 23.Q'
-    if 'green slip' in v:
-        return 'Green Slip / 23.Q'
-    if 'sc' in v or 'short call' in v:
-        return 'Short Call'
-    if 'long call' in v or 'lc' in v:
-        return 'Long Call'
-    if '23.o' in v or '23o' in v:
-        return '23.O'
-    if 'rotation coverage sequence' in v:
-        return 'Rotation Coverage Sequence'
-    if 'inverse assignment' in v or '23.r' in v:
-        return 'Inverse Assignment / 23.R'
-    if any(x in v for x in ['deadhead', '8.d', '8.d.3', '8d3']):
-        return 'Deadhead / 8.D'
-    if 'swap with the pot' in v:
-        return 'Swap With The Pot'
-    if '23.j' in v:
-        return '23.J'
-    if '4.f' in v:
-        return '4.F'
-    if 'arcos' in v or '23.z' in v:
-        return 'ARCOS / 23.Z'
-    if any(x in v for x in ['white slip', '23.p']):
-        return 'White Slip / 23.P'
-    if any(x in v for x in ['reroute', '23.l', '23l']):
-        return 'Reroute / 23.L'
-    if 'illegal rotation' in v:
-        return 'Illegal Rotation'
-    if '23.k' in v:
-        return '23.K'
-    if 'mou 24-01' in v:
-        return 'MOU 24-01'
-    return str(violation).strip() or "Unknown"
-
-def status_canonical(status):
-    """Normalize status values (from original script)"""
-    if pd.isna(status) or not status:
-        return "unknown"
-        
-    s = str(status).strip().lower()
-    if s == "submitted to company":
-        return "open"
-    if s == "impasse":
-        return "impasse"
-    if s == "closed without payment":
-        return "denied"
-    if s == "paid":
-        return "approved"
-    if s in ("in review", "archived", "contested"):
-        return s
-    if s in ("open", "approved", "denied", "impasse"):
-        return s
-    return s
-
-def calculate_comprehensive_analytics(df, relief_rate=320.47):
-    """Calculate all analytics from original script"""
-    # Add grouped subject and canonical status
-    df = df.copy()
-    df['Subject_Grouped'] = df['Subject Violations'].apply(group_subject_key)
-    df['Status_Canonical'] = df['Status'].apply(status_canonical)
-    df['Relief_Dollars'] = df['Relief Minutes'].apply(lambda x: relief_dollars(x, relief_rate))
-    
-    # Get all statuses
-    all_statuses = sorted(df['Status_Canonical'].unique())
-    
-    # Subject grouped stats with dollars per status
-    subject_stats = {}
-    
-    for subject in df['Subject_Grouped'].unique():
-        subject_data = df[df['Subject_Grouped'] == subject]
-        stats = {"count": len(subject_data)}
-        
-        for status in all_statuses:
-            status_data = subject_data[subject_data['Status_Canonical'] == status]
-            # Use safe key format - replace spaces with underscores
-            safe_status = status.replace(' ', '_').replace('-', '_')
-            stats[f"{safe_status}_count"] = len(status_data)
-            stats[f"{safe_status}_minutes"] = status_data['Relief Minutes'].sum()
-            stats[f"{safe_status}_dollars"] = status_data['Relief_Dollars'].sum()
-            stats[f"{safe_status}_pct"] = (len(status_data) / len(subject_data) * 100) if len(subject_data) > 0 else 0
-            
-        subject_stats[subject] = stats
-    
-    return subject_stats, all_statuses, df
-
-def load_demo_data():
-    """Load demo data for testing the dashboard"""
-    import random
-    import numpy as np
-    
-    # Generate sample claims data with realistic patterns
-    subjects = [
-        'Rest', '11.F', 'Yellow Slip / 12.T', 'Green Slip / 23.Q', 
-        'Short Call', 'Long Call', '23.O', 'Deadhead / 8.D',
-        'Payback Day / 23.S.11', 'White Slip / 23.P', 'Reroute / 23.L',
-        'ARCOS / 23.Z', 'Inverse Assignment / 23.R', '23.J', '4.F'
-    ]
-    
-    statuses = ['approved', 'denied', 'open', 'in review', 'impasse']
-    
-    # Create employee pool - some will have multiple claims
-    base_employees = [f'N{100000 + i}' for i in range(60)]  # 60 unique employees
-    
-    # Generate 150 sample claims with some employees having multiple claims
-    data = []
-    ticket_counter = 123000
-    
-    for i in range(150):
-        # Some employees are more likely to have multiple claims
-        if i < 30:
-            # First 30 claims - unique employees
-            emp_num = base_employees[i]
-        else:
-            # Remaining claims - some employees repeat (creating multi-claim pilots)
-            if random.random() < 0.4:  # 40% chance of repeat employee
-                emp_num = random.choice(base_employees[:40])  # Choose from first 40 employees
-            else:
-                emp_num = random.choice(base_employees[40:])  # Or use remaining employees
-        
-        # Generate realistic relief times based on subject
-        subject = random.choice(subjects)
-        if 'Rest' in subject:
-            relief_minutes = random.randint(60, 300)  # Rest violations tend to be longer
-        elif 'Short Call' in subject:
-            relief_minutes = random.randint(30, 120)  # Short calls are typically shorter
-        elif 'Yellow Slip' in subject or '12.T' in subject:
-            relief_minutes = random.randint(90, 240)  # Medium duration
-        else:
-            relief_minutes = random.randint(45, 180)  # Standard range
-        
-        # Status distribution with some bias
-        status_weights = [0.35, 0.25, 0.20, 0.15, 0.05]  # approved, denied, open, in review, impasse
-        status = random.choices(statuses, weights=status_weights)[0]
-        
-        # Generate realistic dates over past 6 months
-        days_ago = random.randint(1, 180)
-        from datetime import datetime, timedelta
-        interaction_date = (datetime.now() - timedelta(days=days_ago)).strftime('%Y-%m-%d')
-        
-        data.append({
-            'Ticket #': f'{ticket_counter + i:06d}',
-            'Status': status,
-            'Relief Minutes': relief_minutes,
-            'Subject Violations': subject,
-            'Emp #': emp_num,
-            'Last Interaction': interaction_date,
-            'Assignee': f'Assignee {random.randint(1,12)}',
-            'Dispute #': f'D{2000 + i}',
-            'Incident Date Rot #': f'{interaction_date} ROT{random.randint(1,50)}'
-        })
-    
-    st.session_state.claims_data = pd.DataFrame(data)
-    # Don't automatically set demo_mode here - let the toggle control it
-
-def show_overview_tab():
-    st.header("📈 STS Claims Overview")
-    
-    # Check if data exists
-    if 'claims_data' not in st.session_state:
-        if st.session_state.get('demo_mode', True):
-            st.info("No data loaded. Loading demo data...")
-            load_demo_data()
-        else:
-            st.info("No data loaded. Please run data collection or load existing data from the sidebar.")
-            return
-    
-    df = st.session_state.claims_data
-    relief_rate = 320.47
-    
-    # Show demo mode indicator
-    if st.session_state.get('demo_mode', False):
-        st.info("🎯 **Demo Mode Active** - Displaying sample data for demonstration and testing purposes")
-    
-    # Calculate comprehensive analytics
-    subject_stats, all_statuses, enhanced_df = calculate_comprehensive_analytics(df, relief_rate)
-    
-    # === TOP-LEVEL METRICS ===
-    col1, col2, col3, col4, col5 = st.columns(5)
-    
-    with col1:
-        total_claims = len(df)
-        st.metric("📋 Total Claims", f"{total_claims:,}")
-    
-    with col2:
-        total_relief_hours = df['Relief Minutes'].sum() / 60
-        st.metric("⏰ Total Relief Hours", f"{total_relief_hours:,.1f}")
-    
-    with col3:
-        avg_relief_per_claim = df['Relief Minutes'].mean() / 60
-        st.metric("📊 Avg Relief/Claim", f"{avg_relief_per_claim:.1f}h")
-    
-    with col4:
-        total_value = enhanced_df['Relief_Dollars'].sum()
-        st.metric("💰 Total Value", f"${total_value:,.0f}")
-    
-    with col5:
-        unique_subjects = len(subject_stats)
-        st.metric("🏷️ Violation Types", unique_subjects)
-    
-    # === STATUS BREAKDOWN ===
-    st.subheader("📊 Status Distribution")
-    
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        # Status pie chart with exact counts
-        status_counts = enhanced_df['Status_Canonical'].value_counts()
-        fig = px.pie(values=status_counts.values, names=status_counts.index, 
-                    title="Claims by Status")
-        # Add percentage and count labels
-        fig.update_traces(textposition='inside', textinfo='percent+label')
-        st.plotly_chart(fig, use_container_width=True)
-        
-        # Status metrics
-        for status in all_statuses:
-            count = len(enhanced_df[enhanced_df['Status_Canonical'] == status])
-            pct = count / len(enhanced_df) * 100 if len(enhanced_df) > 0 else 0
-            value = enhanced_df[enhanced_df['Status_Canonical'] == status]['Relief_Dollars'].sum()
-            
-            if count > 0:
-                st.metric(
-                    f"{status.title()} Cases", 
-                    f"{count} ({pct:.1f}%)",
-                    delta=f"${value:,.0f} total value"
-                )
-    
-    with col2:
-        # Top 10 subject violations
-        subject_counts = enhanced_df['Subject_Grouped'].value_counts().head(10)
-        fig = px.bar(x=subject_counts.values, y=subject_counts.index, 
-                    orientation='h', title="Top 10 Subject Violations")
-        fig.update_layout(height=400)
-        st.plotly_chart(fig, use_container_width=True)
-    
-    # === FINANCIAL OVERVIEW ===
-    st.subheader("💰 Financial Summary")
-    
-    col1, col2, col3, col4 = st.columns(4)
-    
-    with col1:
-        approved_value = enhanced_df[enhanced_df['Status_Canonical'] == 'approved']['Relief_Dollars'].sum()
-        approved_count = len(enhanced_df[enhanced_df['Status_Canonical'] == 'approved'])
-        st.metric(
-            "💚 Approved Value",
-            f"${approved_value:,.0f}",
-            delta=f"{approved_count} cases"
-        )
-    
-    with col2:
-        pending_value = enhanced_df[enhanced_df['Status_Canonical'].isin(['open', 'in review'])]['Relief_Dollars'].sum()
-        pending_count = len(enhanced_df[enhanced_df['Status_Canonical'].isin(['open', 'in review'])])
-        st.metric(
-            "🟡 Pending Value",
-            f"${pending_value:,.0f}",
-            delta=f"{pending_count} cases"
-        )
-    
-    with col3:
-        denied_value = enhanced_df[enhanced_df['Status_Canonical'] == 'denied']['Relief_Dollars'].sum()
-        denied_count = len(enhanced_df[enhanced_df['Status_Canonical'] == 'denied'])
-        st.metric(
-            "❌ Denied Value", 
-            f"${denied_value:,.0f}",
-            delta=f"{denied_count} cases"
-        )
-    
-    with col4:
-        # Calculate overall approval rate
-        decided_cases = enhanced_df[enhanced_df['Status_Canonical'].isin(['approved', 'denied'])]
-        if len(decided_cases) > 0:
-            approval_rate = len(decided_cases[decided_cases['Status_Canonical'] == 'approved']) / len(decided_cases) * 100
-        else:
-            approval_rate = 0
-        st.metric(
-            "📈 Approval Rate",
-            f"{approval_rate:.1f}%",
-            delta=f"{len(decided_cases)} decided cases"
-        )
-    
-    # === TOP PERFORMING SUBJECTS ===
-    st.subheader("🏆 Top Performing Subject Violations")
-    
-    # Create performance summary
-    performance_data = []
-    for subject, stats in subject_stats.items():
-        total_value = sum([stats.get(f"{status}_dollars", 0) for status in all_statuses])
-        approved_count = stats.get("approved_count", 0)
-        total_count = stats["count"]
-        
-        performance_data.append({
-            'Subject': subject,
-            'Total Cases': total_count,
-            'Total Value': total_value,
-            'Approved Cases': approved_count,
-            'Value per Case': total_value / max(total_count, 1)
-        })
-    
-    # Top by volume
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        st.write("**Top by Case Volume:**")
-        top_volume = sorted(performance_data, key=lambda x: x['Total Cases'], reverse=True)[:5]
-        for item in top_volume:
-            st.write(f"• **{item['Subject']}**: {item['Total Cases']} cases (${item['Total Value']:,.0f})")
-    
-    with col2:
-        st.write("**Top by Total Value:**")
-        top_value = sorted(performance_data, key=lambda x: x['Total Value'], reverse=True)[:5]
-        for item in top_value:
-            st.write(f"• **{item['Subject']}**: ${item['Total Value']:,.0f} ({item['Total Cases']} cases)")
-    
-    # === QUICK INSIGHTS ===
-    st.subheader("💡 Quick Insights")
-    
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        st.info(f"""
-        **📈 Key Statistics:**
-        • Total claims processed: **{total_claims:,}**
-        • Average relief per claim: **{avg_relief_per_claim:.1f} hours**
-        • Total financial exposure: **${total_value:,.0f}**
-        • Most common violation: **{enhanced_df['Subject_Grouped'].mode().iloc[0] if len(enhanced_df) > 0 else 'N/A'}**
-        """)
-    
-    with col2:
-        highest_value_subject = max(performance_data, key=lambda x: x['Total Value']) if performance_data else None
-        highest_approval_rate = 0
-        highest_approval_subject = "N/A"
-        
-        for subject, stats in subject_stats.items():
-            approved = stats.get("approved_count", 0)
-            denied = stats.get("denied_count", 0)
-            total_decided = approved + denied
-            if total_decided >= 5:  # Only consider subjects with at least 5 decided cases
-                rate = approved / total_decided
-                if rate > highest_approval_rate:
-                    highest_approval_rate = rate
-                    highest_approval_subject = subject
-        
-        if highest_value_subject:
-            st.success(f"""
-            **🎯 Performance Highlights:**
-            • Highest value subject: **{highest_value_subject['Subject']}**
-            • Best approval rate: **{highest_approval_subject}** ({highest_approval_rate:.1%})
-            • Pending claims value: **${pending_value:,.0f}**
-            • Current approval rate: **{approval_rate:.1f}%**
-            """)
-
-def show_analytics_tab():
-    st.header("📊 Comprehensive Analytics")
-    
-    if 'claims_data' not in st.session_state:
-        if st.session_state.get('demo_mode', True):
-            st.info("No data loaded. Loading demo data...")
-            load_demo_data()
-        else:
-            st.info("No data loaded. Please run data collection or load existing data from the sidebar.")
-            return
-    
-    df = st.session_state.claims_data
-    relief_rate = 320.47
-    
-    # Show demo mode indicator
-    if st.session_state.get('demo_mode', False):
-        st.info("🎯 **Demo Mode Active** - Displaying comprehensive sample analytics")
-    
-    # Calculate comprehensive analytics
-    subject_stats, all_statuses, enhanced_df = calculate_comprehensive_analytics(df, relief_rate)
-    
-    # === PILOTS WITH MULTIPLE SUBMISSIONS ===
-    st.subheader("👥 Pilots with Multiple Submissions")
-    
-    # Group by employee number to find multiple submissions
-    employee_stats = enhanced_df.groupby('Emp #').agg({
-        'Ticket #': 'count',
-        'Relief_Dollars': 'sum',
-        'Relief Minutes': 'sum',
-        'Status_Canonical': lambda x: x.value_counts().to_dict(),
-        'Subject_Grouped': lambda x: ', '.join(x.unique()[:3]) + ('...' if len(x.unique()) > 3 else '')
-    }).rename(columns={'Ticket #': 'Total_Claims'})
-    
-    # Filter for employees with multiple claims
-    multiple_claims = employee_stats[employee_stats['Total_Claims'] > 1].sort_values('Total_Claims', ascending=False)
-    
-    if len(multiple_claims) > 0:
-        # Create display dataframe
-        multi_display = []
-        for emp, row in multiple_claims.iterrows():
-            status_counts = row['Status_Canonical']
-            approved = status_counts.get('approved', 0)
-            denied = status_counts.get('denied', 0)
-            pending = status_counts.get('open', 0) + status_counts.get('in review', 0)
-            
-            multi_display.append({
-                'Employee #': emp,
-                'Total Claims': row['Total_Claims'],
-                'Total Value': f"${row['Relief_Dollars']:,.0f}",
-                'Total Hours': f"{row['Relief Minutes']/60:.1f}",
-                'Approved': approved,
-                'Denied': denied,
-                'Pending': pending,
-                'Top Subjects': row['Subject_Grouped']
-            })
-        
-        multi_df = pd.DataFrame(multi_display)
-        st.dataframe(multi_df, use_container_width=True, height=300)
-        
-        # Statistics
-        col1, col2, col3, col4 = st.columns(4)
-        with col1:
-            st.metric("Multi-Claim Pilots", len(multiple_claims))
-        with col2:
-            avg_claims = multiple_claims['Total_Claims'].mean()
-            st.metric("Avg Claims/Pilot", f"{avg_claims:.1f}")
-        with col3:
-            total_multi_value = multiple_claims['Relief_Dollars'].sum()
-            st.metric("Multi-Claim Value", f"${total_multi_value:,.0f}")
-        with col4:
-            max_claims = multiple_claims['Total_Claims'].max()
-            st.metric("Max Claims (1 pilot)", int(max_claims))
-    else:
-        st.info("No pilots found with multiple claims in current dataset.")
-    
-    # === TOP 20 HIGHEST VALUE CLAIMS ===
-    st.subheader("🏆 Top 20 Highest Value Claims")
-    
-    # Sort by relief dollars and take top 20
-    top_20 = enhanced_df.nlargest(20, 'Relief_Dollars')[
-        ['Ticket #', 'Emp #', 'Subject_Grouped', 'Status_Canonical', 'Relief Minutes', 'Relief_Dollars', 'Last Interaction']
-    ].copy()
-    
-    # Format for display
-    top_20['Relief_Dollars_Display'] = top_20['Relief_Dollars'].apply(lambda x: f"${x:,.0f}")
-    top_20['Relief_Hours'] = (top_20['Relief Minutes'] / 60).round(1)
-    
-    display_top_20 = top_20[['Ticket #', 'Emp #', 'Subject_Grouped', 'Status_Canonical', 
-                            'Relief_Hours', 'Relief_Dollars_Display', 'Last Interaction']].rename(columns={
-        'Subject_Grouped': 'Subject',
-        'Status_Canonical': 'Status',
-        'Relief_Hours': 'Hours',
-        'Relief_Dollars_Display': 'Value',
-        'Last Interaction': 'Date'
-    })
-    
-    st.dataframe(display_top_20, use_container_width=True, height=400)
-    
-    # Top 20 summary metrics
-    col1, col2, col3, col4 = st.columns(4)
-    with col1:
-        top_20_value = top_20['Relief_Dollars'].sum()
-        st.metric("Top 20 Total Value", f"${top_20_value:,.0f}")
-    with col2:
-        avg_top_20 = top_20['Relief_Dollars'].mean()
-        st.metric("Average Top 20", f"${avg_top_20:,.0f}")
-    with col3:
-        top_20_hours = top_20['Relief Minutes'].sum() / 60
-        st.metric("Top 20 Total Hours", f"{top_20_hours:,.1f}")
-    with col4:
-        pct_of_total = (top_20_value / enhanced_df['Relief_Dollars'].sum()) * 100
-        st.metric("% of Total Value", f"{pct_of_total:.1f}%")
-    
-    # === SUBJECT BREAKDOWN BY STATUS ===
-    st.subheader("📋 Complete Subject Violation Analysis")
-    
-    # Create detailed breakdown table
-    breakdown_data = []
-    for subject, stats in subject_stats.items():
-        row = [subject, stats["count"]]
-        for status in all_statuses:
-            # Use safe key format
-            safe_status = status.replace(' ', '_').replace('-', '_')
-            count = stats.get(f"{safe_status}_count", 0)
-            dollars = stats.get(f"{safe_status}_dollars", 0)
-            pct = stats.get(f"{safe_status}_pct", 0)
-            row.extend([count, f"${dollars:,.0f}", f"{pct:.1f}%"])
-        breakdown_data.append(row)
-    
-    # Create column headers
-    columns = ["Subject", "Total Cases"]
-    for status in all_statuses:
-        columns.extend([f"{status.title()} Count", f"{status.title()} Dollars", f"{status.title()} %"])
-    
-    breakdown_df = pd.DataFrame(breakdown_data, columns=columns)
-    breakdown_df = breakdown_df.sort_values("Total Cases", ascending=False)
-    
-    st.dataframe(breakdown_df, use_container_width=True, height=400)
-    
-    # === TIMING ANALYSIS ===
-    st.subheader("⏰ Timing and Duration Analysis")
-    
-    # Relief time distribution
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        # Histogram of relief minutes
-        fig = px.histogram(enhanced_df, x='Relief Minutes', nbins=20,
-                          title="Distribution of Relief Times")
-        fig.update_layout(xaxis_title="Relief Minutes", yaxis_title="Number of Claims")
-        st.plotly_chart(fig, use_container_width=True)
-        
-        # Relief time statistics
-        st.write("**Relief Time Statistics:**")
-        st.write(f"• Mean: {enhanced_df['Relief Minutes'].mean():.1f} minutes")
-        st.write(f"• Median: {enhanced_df['Relief Minutes'].median():.1f} minutes")
-        st.write(f"• Min: {enhanced_df['Relief Minutes'].min()} minutes")
-        st.write(f"• Max: {enhanced_df['Relief Minutes'].max()} minutes")
-    
-    with col2:
-        # Relief time by subject (box plot)
-        fig = px.box(enhanced_df, x='Subject_Grouped', y='Relief Minutes',
-                    title="Relief Time Distribution by Subject")
-        fig.update_layout(xaxis_tickangle=-45)
-        st.plotly_chart(fig, use_container_width=True)
-        
-        # Average relief time by subject
-        avg_relief = enhanced_df.groupby('Subject_Grouped')['Relief Minutes'].mean().sort_values(ascending=False)
-        st.write("**Average Relief Time by Subject:**")
-        for subject, avg_time in avg_relief.head(5).items():
-            st.write(f"• {subject}: {avg_time:.1f} minutes")
-    
-    # === APPROVAL PATTERNS ===
-    st.subheader("📈 Approval Rate Patterns")
-    
-    # Calculate approval rates for subjects with enough data
-    approval_patterns = []
-    for subject, stats in subject_stats.items():
-        approved = stats.get("approved_count", 0)
-        denied = stats.get("denied_count", 0)
-        total_decided = approved + denied
-        
-        if total_decided >= 3:  # Only include subjects with at least 3 decided cases
-            approval_rate = approved / total_decided
-            approval_patterns.append({
-                'Subject': subject,
-                'Total Decided': total_decided,
-                'Approved': approved,
-                'Denied': denied,
-                'Approval Rate': approval_rate,
-                'Approval Rate %': f"{approval_rate:.1%}",
-                'Confidence': 'High' if total_decided >= 10 else 'Medium' if total_decided >= 5 else 'Low'
-            })
-    
-    if approval_patterns:
-        pattern_df = pd.DataFrame(approval_patterns).sort_values('Approval Rate', ascending=False)
-        
-        # Approval rate chart
-        fig = px.bar(pattern_df, x='Subject', y='Approval Rate',
-                    color='Confidence', title="Approval Rates by Subject (Confidence Level)")
-        fig.update_layout(xaxis_tickangle=-45)
-        fig.update_traces(texttemplate='%{y:.1%}', textposition='outside')
-        st.plotly_chart(fig, use_container_width=True)
-        
-        st.dataframe(pattern_df[['Subject', 'Total Decided', 'Approved', 'Denied', 'Approval Rate %', 'Confidence']], 
-                    use_container_width=True)
-    
-    # === EXPORT ALL ANALYTICS ===
-    st.subheader("📥 Export Complete Analytics")
-    
-    col1, col2, col3 = st.columns(3)
-    
-    with col1:
-        if st.button("📊 Export Subject Analysis"):
-            csv = breakdown_df.to_csv(index=False)
-            st.download_button(
-                label="Download Subject Analysis CSV",
-                data=csv,
-                file_name=f"subject_analysis_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
-                mime="text/csv"
-            )
-    
-    with col2:
-        if len(multiple_claims) > 0 and st.button("👥 Export Multi-Claim Pilots"):
-            csv = pd.DataFrame(multi_display).to_csv(index=False)
-            st.download_button(
-                label="Download Multi-Claim Pilots CSV",
-                data=csv,
-                file_name=f"multi_claim_pilots_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
-                mime="text/csv"
-            )
-    
-    with col3:
-        if st.button("🏆 Export Top 20 Claims"):
-            csv = display_top_20.to_csv(index=False)
-            st.download_button(
-                label="Download Top 20 Claims CSV",
-                data=csv,
-                file_name=f"top_20_claims_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
-                mime="text/csv"
-            )
-    
-    # === COMPREHENSIVE SUMMARY ===
-    st.subheader("📋 Analytics Summary")
-    
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        st.info(f"""
-        **📈 Data Overview:**
-        • Total claims analyzed: **{len(enhanced_df):,}**
-        • Unique employees: **{enhanced_df['Emp #'].nunique():,}**
-        • Unique violation types: **{len(subject_stats)}**
-        • Date range: **{enhanced_df['Last Interaction'].min() if 'Last Interaction' in enhanced_df.columns else 'N/A'}** to **{enhanced_df['Last Interaction'].max() if 'Last Interaction' in enhanced_df.columns else 'N/A'}**
-        """)
-    
-    with col2:
-        # Find most active pilot and highest value subject
-        most_active = employee_stats.sort_values('Total_Claims', ascending=False).index[0] if len(employee_stats) > 0 else 'N/A'
-        highest_value_subject = max(subject_stats.items(), key=lambda x: sum([x[1].get(f"{s.replace(' ', '_').replace('-', '_')}_dollars", 0) for s in all_statuses]))[0] if subject_stats else 'N/A'
-        
-        st.success(f"""
-        **🎯 Key Insights:**
-        • Most active pilot: **{most_active}** ({employee_stats.loc[most_active, 'Total_Claims'] if most_active != 'N/A' else 0} claims)
-        • Highest value subject: **{highest_value_subject}**
-        • Multi-claim pilots: **{len(multiple_claims)}** ({len(multiple_claims)/len(employee_stats)*100:.1f}% of pilots)
-        • Top 20 claims represent: **{pct_of_total:.1f}%** of total value
-        """)
-
-def show_financial_tab():
-    st.header("💰 Comprehensive Financial Analysis")
-    
-    if 'claims_data' not in st.session_state:
-        if st.session_state.get('demo_mode', True):
-            st.info("No data loaded. Loading demo data...")
-            load_demo_data()
-        else:
-            st.info("No data loaded. Please run data collection or load existing data from the sidebar.")
-            return
-    
-    df = st.session_state.claims_data
-    relief_rate = 320.47
-    
-    # Calculate comprehensive analytics
-    subject_stats, all_statuses, enhanced_df = calculate_comprehensive_analytics(df, relief_rate)
-    
-    # === TOP-LEVEL FINANCIAL METRICS ===
-    col1, col2, col3, col4 = st.columns(4)
-    
-    with col1:
-        total_approved = enhanced_df[enhanced_df['Status_Canonical'] == 'approved']['Relief_Dollars'].sum()
-        st.metric("💚 Approved Value", f"${total_approved:,.0f}")
-    
-    with col2:
-        total_pending = enhanced_df[enhanced_df['Status_Canonical'].isin(['open', 'in review'])]['Relief_Dollars'].sum()
-        st.metric("🟡 Pending Value", f"${total_pending:,.0f}")
-    
-    with col3:
-        total_denied = enhanced_df[enhanced_df['Status_Canonical'] == 'denied']['Relief_Dollars'].sum()
-        st.metric("❌ Denied Value", f"${total_denied:,.0f}")
-    
-    with col4:
-        total_value = enhanced_df['Relief_Dollars'].sum()
-        st.metric("📊 Total Value", f"${total_value:,.0f}")
-    
-    # === FINANCIAL BREAKDOWN BY SUBJECT ===
-    st.subheader("📋 Financial Breakdown by Subject Violation")
-    
-    # Create financial summary
-    financial_summary = []
-    for subject, stats in subject_stats.items():
-        total_dollars = sum([stats.get(f"{status.replace(' ', '_').replace('-', '_')}_dollars", 0) for status in all_statuses])
-        approved_dollars = stats.get("approved_dollars", 0)
-        pending_dollars = stats.get("open_dollars", 0) + stats.get("in_review_dollars", 0)
-        denied_dollars = stats.get("denied_dollars", 0)
-        
-        financial_summary.append({
-            'Subject': subject,
-            'Total Cases': stats["count"],
-            'Total Value': f"${total_dollars:,.0f}",
-            'Approved Value': f"${approved_dollars:,.0f}",
-            'Pending Value': f"${pending_dollars:,.0f}",
-            'Denied Value': f"${denied_dollars:,.0f}",
-            'Avg per Case': f"${total_dollars/max(stats['count'], 1):,.0f}"
-        })
-    
-    financial_df = pd.DataFrame(financial_summary)
-    financial_df = financial_df.sort_values('Total Cases', ascending=False)
-    
-    st.dataframe(financial_df, use_container_width=True, height=400)
-    
-    # === FINANCIAL CHARTS ===
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        # Top subjects by total value
-        top_subjects = financial_df.head(10)
-        fig = px.bar(top_subjects, x='Subject', y='Total Value',
-                    title="Top 10 Subjects by Total Financial Value")
-        fig.update_layout(xaxis_tickangle=-45)
-        # Remove $ and , for plotting
-        top_subjects['Value_Numeric'] = top_subjects['Total Value'].str.replace('$', '').str.replace(',', '').astype(float)
-        fig = px.bar(top_subjects, x='Subject', y='Value_Numeric',
-                    title="Top 10 Subjects by Total Financial Value")
-        fig.update_layout(xaxis_tickangle=-45, yaxis_title="Total Value ($)")
-        st.plotly_chart(fig, use_container_width=True)
-    
-    with col2:
-        # Status distribution by dollars
-        status_totals = []
-        for status in all_statuses:
-            total = enhanced_df[enhanced_df['Status_Canonical'] == status]['Relief_Dollars'].sum()
-            if total > 0:
-                status_totals.append({'Status': status.title(), 'Total': total})
-        
-        if status_totals:
-            status_df = pd.DataFrame(status_totals)
-            fig = px.pie(status_df, values='Total', names='Status',
-                        title="Financial Value Distribution by Status")
-            st.plotly_chart(fig, use_container_width=True)
-    
-    # === DETAILED FINANCIAL TABLE BY STATUS ===
-    st.subheader("💰 Detailed Dollars by Subject and Status")
-    
-    detailed_financial = []
-    for subject, stats in subject_stats.items():
-        row = {'Subject': subject}
-        for status in all_statuses:
-            safe_status = status.replace(' ', '_').replace('-', '_')
-            dollars = stats.get(f"{safe_status}_dollars", 0)
-            row[f"{status.title()}"] = f"${dollars:,.0f}"
-        detailed_financial.append(row)
-    
-    detailed_df = pd.DataFrame(detailed_financial)
-    st.dataframe(detailed_df, use_container_width=True)
-    
-    # === PROJECTED FINANCIAL IMPACT ===
-    st.subheader("🔮 Projected Financial Impact")
-    
-    projections = []
-    total_projected_approvals = 0
-    total_projected_value = 0
-    
-    # Debug information
-    st.write("**Debug Info:**")
-    debug_info = []
-    
-    for subject, stats in subject_stats.items():
-        approved = stats.get("approved_count", 0)
-        denied = stats.get("denied_count", 0)
-        total_decided = approved + denied
-        
-        # Fix: Use safe key format for status names
-        open_cases = stats.get("open_count", 0)
-        in_review_cases = stats.get("in_review_count", 0)  # Now uses underscore
-        pending_cases = open_cases + in_review_cases
-        
-        # Calculate probability with minimum threshold
-        probability = approved / total_decided if total_decided >= 3 else 0  # Need at least 3 decided cases
-        
-        debug_info.append({
-            'Subject': subject,
-            'Approved': approved,
-            'Denied': denied,
-            'Open': open_cases,
-            'In Review': in_review_cases,
-            'Pending Total': pending_cases,
-            'Probability': f"{probability:.1%}" if probability > 0 else "N/A"
-        })
-        
-        # More lenient conditions for projections
-        if pending_cases > 0 and total_decided >= 2:  # At least 2 decided cases
-            # Calculate average approved value more safely
-            approved_dollars = stats.get("approved_dollars", 0)
-            if approved > 0 and approved_dollars > 0:
-                avg_approved_value = approved_dollars / approved
-                estimated_approvals = probability * pending_cases
-                estimated_value = estimated_approvals * avg_approved_value
-                
-                total_projected_approvals += estimated_approvals
-                total_projected_value += estimated_value
-                
-                projections.append({
-                    'Subject': subject,
-                    'Pending Cases': pending_cases,
-                    'Historical Approval Rate': f"{probability:.1%}",
-                    'Estimated Approvals': f"{estimated_approvals:.1f}",
-                    'Avg Approved Value': f"${avg_approved_value:,.0f}",
-                    'Projected Value': f"${estimated_value:,.0f}"
-                })
-    
-    # Show debug information
-    debug_df = pd.DataFrame(debug_info)
-    st.dataframe(debug_df, use_container_width=True)
-    
-    if projections:
-        st.success(f"✅ Found {len(projections)} subjects with projection data")
-        projection_df = pd.DataFrame(projections)
-        st.dataframe(projection_df, use_container_width=True)
-        
-        # Summary metrics for projections
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            st.metric("🎯 Projected Approvals", f"{total_projected_approvals:.0f}")
-        with col2:
-            st.metric("💰 Projected Value", f"${total_projected_value:,.0f}")
-        with col3:
-            current_approval_rate = len(enhanced_df[enhanced_df['Status_Canonical'] == 'approved']) / len(enhanced_df) * 100
-            st.metric("📈 Overall Approval Rate", f"{current_approval_rate:.1f}%")
-    else:
-        st.warning("⚠️ No projection data available. This could be because:")
-        st.write("• No pending cases (open or in review status)")
-        st.write("• Insufficient historical data (need at least 2 decided cases per subject)")
-        st.write("• No approved cases with dollar values to calculate averages")
-        
-        # Show what we have
-        total_pending = sum(item['Pending Total'] for item in debug_info)
-        total_decided = sum(item['Approved'] + item['Denied'] for item in debug_info)
-        st.info(f"**Current Data:** {total_pending} pending cases, {total_decided} decided cases total")
-    
-    # === EXPORT OPTIONS ===
-    st.subheader("📥 Export Financial Data")
-    
-    col1, col2, col3 = st.columns(3)
-    
-    with col1:
-        if st.button("Export Financial Summary"):
-            csv = financial_df.to_csv(index=False)
-            st.download_button(
-                label="Download Financial Summary CSV",
-                data=csv,
-                file_name=f"financial_summary_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
-                mime="text/csv"
-            )
-    
-    with col2:
-        if st.button("Export Detailed Breakdown"):
-            csv = detailed_df.to_csv(index=False)
-            st.download_button(
-                label="Download Detailed Breakdown CSV",
-                data=csv,
-                file_name=f"detailed_financial_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
-                mime="text/csv"
-            )
-    
-    with col3:
-        if projections and st.button("Export Projections"):
-            csv = projection_df.to_csv(index=False)
-            st.download_button(
-                label="Download Projections CSV",
-                data=csv,
-                file_name=f"financial_projections_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
-                mime="text/csv"
-            )
-
-def show_claims_details_tab():
-    st.header("📋 Claims Details")
-    
-    if 'claims_data' not in st.session_state:
-        st.info("No data loaded. Please run data collection first.")
-        return
-    
-    df = st.session_state.claims_data
-    
-    # Show demo mode indicator
-    if st.session_state.get('demo_mode', False):
-        st.info("🎯 **Demo Mode Active** - Displaying sample data for demonstration and testing purposes")
-    
-    # Add enhanced columns
-    enhanced_df = df.copy()
-    enhanced_df['Relief_Dollars'] = enhanced_df['Relief Minutes'].apply(relief_dollars)
-    enhanced_df['Subject_Grouped'] = enhanced_df['Subject Violations'].apply(group_subject_key)
-    enhanced_df['Status_Canonical'] = enhanced_df['Status'].apply(status_canonical)
-    
-    # Filter options
-    col1, col2, col3 = st.columns(3)
-    
-    with col1:
-        status_filter = st.multiselect(
-            "Filter by Status",
-            options=enhanced_df['Status_Canonical'].unique(),
-            default=enhanced_df['Status_Canonical'].unique()
-        )
-    
-    with col2:
-        subject_filter = st.multiselect(
-            "Filter by Subject",
-            options=enhanced_df['Subject_Grouped'].unique(),
-            default=enhanced_df['Subject_Grouped'].unique()
-        )
-    
-    with col3:
-        min_value = st.number_input("Min Relief Value ($)", value=0.0, step=100.0)
-    
-    # Apply filters
-    filtered_df = enhanced_df[
-        (enhanced_df['Status_Canonical'].isin(status_filter)) &
-        (enhanced_df['Subject_Grouped'].isin(subject_filter)) &
-        (enhanced_df['Relief_Dollars'] >= min_value)
-    ]
-    
-    # Display summary
-    st.subheader(f"📊 Showing {len(filtered_df)} of {len(enhanced_df)} claims")
-    
-    # Summary metrics for filtered data
-    col1, col2, col3, col4 = st.columns(4)
-    
-    with col1:
-        total_value = filtered_df['Relief_Dollars'].sum()
-        st.metric("Total Value", f"${total_value:,.0f}")
-    
-    with col2:
-        avg_value = filtered_df['Relief_Dollars'].mean()
-        st.metric("Average Value", f"${avg_value:,.0f}")
-    
-    with col3:
-        total_hours = filtered_df['Relief Minutes'].sum() / 60
-        st.metric("Total Hours", f"{total_hours:,.1f}")
-    
-    with col4:
-        unique_employees = filtered_df['Emp #'].nunique()
-        st.metric("Unique Employees", unique_employees)
-    
-    # Display data table
-    display_columns = [
-        'Ticket #', 'Status', 'Relief Minutes', 'Relief_Dollars',
-        'Subject Violations', 'Subject_Grouped', 'Emp #',
-        'Last Interaction', 'Assignee'
-    ]
-    
-    # Format the dataframe for display
-    display_df = filtered_df[display_columns].copy()
-    display_df['Relief_Dollars'] = display_df['Relief_Dollars'].apply(lambda x: f"${x:,.0f}")
-    
-    st.dataframe(display_df, use_container_width=True, height=400)
-    
-    # Export filtered data
-    if st.button("📥 Export Filtered Data"):
-        csv = filtered_df.to_csv(index=False)
-        st.download_button(
-            label="Download Filtered Claims CSV",
-            data=csv,
-            file_name=f"filtered_claims_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
-            mime="text/csv"
-        )
-
-def show_realtime_status_tab():
-    st.header("🔄 Real-time Status")
-    
-    if st.session_state.get('demo_mode', True):
-        st.info("🎯 **Demo Mode Active** - Real-time features disabled in demo mode")
-        st.write("In production mode, this tab would show:")
-        st.write("• Live scraping status")
-        st.write("• Data collection progress")
-        st.write("• System health monitoring")
-        st.write("• Last update timestamps")
-        st.write("• Error logs and alerts")
-        return
-    
-    # Real-time features when not in demo mode
-    st.info("🔧 **Production Mode** - Real-time monitoring features")
-    
-    # Check if collection is running
-    collection_status = st.session_state.get('collection_status', {})
-    is_running = collection_status.get('running', False)
-    
-    if is_running:
-        st.success("🟢 **Data Collection In Progress**")
-        
-        # Live status display
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            st.subheader("� Current Progress")
-            
-            current_step = collection_status.get('current_step', 'Unknown')
-            pages_processed = collection_status.get('pages_processed', 0)
-            records_found = collection_status.get('records_found', 0)
-            start_time = collection_status.get('start_time')
-            
-            st.write(f"• **Current Step:** {current_step}")
-            st.write(f"• **Pages Processed:** {pages_processed}")
-            st.write(f"• **Records Found:** {records_found}")
-            
-            if start_time:
-                elapsed = datetime.now() - start_time
-                st.write(f"• **Running Time:** {elapsed.seconds} seconds")
-            
-            # Mode indicator
-            if collection_status.get('headless_mode', False):
-                st.info("🔍 **Headless Mode:** Browser running in background")
-            else:
-                st.info("🌐 **Browser Mode:** Check for browser window")
-        
-        with col2:
-            st.subheader("⚡ System Status")
-            st.write("• **Process Status:** ✅ Running")
-            st.write("• **Memory Usage:** Normal")
-            st.write("• **Network Status:** Connected")
-            st.write("• **Error Count:** 0")
-            
-            # Auto-refresh button
-            if st.button("🔄 Refresh Status"):
-                st.rerun()
-                
-        # Progress visualization
-        if pages_processed > 0:
-            st.subheader("📈 Processing Timeline")
-            
-            progress_data = []
-            for i in range(pages_processed + 1):
-                progress_data.append({
-                    'Page': f'Page {i+1}',
-                    'Records': min(15 * (i+1), records_found),
-                    'Status': 'Completed' if i < pages_processed else 'In Progress'
-                })
-            
-            progress_df = pd.DataFrame(progress_data)
-            
-            # Simple progress chart
-            fig = px.bar(progress_df, x='Page', y='Records', color='Status',
-                        title="Records Collected by Page")
-            st.plotly_chart(fig, use_container_width=True)
-            
-    elif collection_status:
-        # Collection completed
-        st.success("✅ **Last Collection Completed**")
-        
-        start_time = collection_status.get('start_time')
-        if start_time:
-            completion_time = datetime.now()
-            duration = completion_time - start_time
-            
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                st.metric("Total Pages", collection_status.get('pages_processed', 0))
-            with col2:
-                st.metric("Total Records", collection_status.get('records_found', 0))
-            with col3:
-                st.metric("Duration", f"{duration.seconds}s")
-                
-            st.info(f"**Completed:** {completion_time.strftime('%H:%M:%S')}")
-            
-    else:
-        # No collection running or completed
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            st.subheader("�🚀 Data Collection Status")
-            st.write("• **Last Update:** Ready for configuration")
-            st.write("• **Collection Status:** Awaiting start")
-            st.write("• **Records Processed:** Configure and start data collection")
-            
-            if st.button("🔄 Check Data Source Connection"):
-                st.info("Testing connection to data source...")
-                st.warning("Connection test would be implemented here based on your original script.")
-        
-        with col2:
-            st.subheader("⚡ System Health")
-            st.write("• **Connection Status:** Ready")
-            st.write("• **Processing Speed:** Not running")
-            st.write("• **Error Rate:** 0%")
-            
-            if st.button("📊 System Diagnostics"):
-                st.info("Running system diagnostics...")
-                st.success("System ready for data collection.")
-    
-    # Configuration status
-    st.subheader("⚙️ Configuration Status")
-    
-    # Check sidebar configuration dynamically
-    relief_rate_set = True  # Relief rate always has a default value
-    export_path_set = len(st.session_state.get('export_path', '')) > 0
-    credentials_set = (len(st.session_state.get('username', '')) > 0 and 
-                      len(st.session_state.get('password', '')) > 0)
-    
-    config_status = []
-    config_status.append(("Relief Rate", "✅ Configured" if relief_rate_set else "❌ Not set"))
-    config_status.append(("Export Path", "✅ Configured" if export_path_set else "❌ Not set"))
-    config_status.append(("Credentials", "✅ Configured" if credentials_set else "❌ Not set"))
-    
-    for item, status in config_status:
-        st.write(f"• **{item}**: {status}")
-    
-    if not all([relief_rate_set, export_path_set, credentials_set]):
-        st.warning("⚠️ Complete configuration in the sidebar to enable data collection.")
-        st.info("💡 Switch off Demo Mode in the sidebar to access configuration options.")
-    else:
-        st.success("✅ All configuration complete. Ready for data collection!")
-        
-        # Add connection test button in real-time status
-        if st.button("🔍 Test Connection Now"):
-            test_data_source_connection(
-                st.session_state.get('username', ''),
-                st.session_state.get('password', ''),
-                st.session_state.get('export_path', '')
-            )
-    
-    # Monitoring tips for headless mode
-    if not is_running:
-        st.subheader("💡 Monitoring Tips")
-        st.info("""
-        **For Headless Mode Data Collection:**
-        • Watch this Real-time Status tab for live updates
-        • Monitor the "Current Step" to see progress
-        • Check "Pages Processed" and "Records Found" counters
-        • Look for error messages in the status updates
-        • Use the "Refresh Status" button for latest information
-        
-        **Signs Collection is Working:**
-        • Status changes from "Initializing..." through various steps
-        • Page count increases over time
-        • Record count grows as pages are processed
-        • No error messages appear in the status
-        """)
-    
-    # Auto-refresh every few seconds if collection is running
-    if is_running:
-        import time
-        time.sleep(1)  # Small delay
-        st.rerun()
-
-def convert_df_to_csv(df):
-    """Convert dataframe to CSV for download"""
-    return df.to_csv(index=False).encode('utf-8')
-
-def export_data():
-    """Export current data in various formats"""
-    if 'claims_data' not in st.session_state:
-        st.warning("No data to export")
-        return
-    
-    df = st.session_state.claims_data
-    
-    # Add enhanced columns for export
-    relief_rate = 320.47
-    enhanced_df = df.copy()
-    enhanced_df['Relief_Dollars'] = enhanced_df['Relief Minutes'].apply(relief_dollars)
-    enhanced_df['Subject_Grouped'] = enhanced_df['Subject Violations'].apply(group_subject_key)
-    enhanced_df['Status_Canonical'] = enhanced_df['Status'].apply(status_canonical)
-    
-    # CSV export
-    csv = convert_df_to_csv(enhanced_df)
-    st.download_button(
-        label="📥 Download Enhanced Data as CSV",
-        data=csv,
-        file_name=f'sts_claims_enhanced_{datetime.now().strftime("%Y%m%d_%H%M%S")}.csv',
-        mime='text/csv'
-    )
-    
-    # Summary report
-    subject_stats, all_statuses, _ = calculate_comprehensive_analytics(df, 320.47)
-    
-    summary_data = []
-    for subject, stats in subject_stats.items():
-        # Calculate total dollars and hours from all statuses
-        total_dollars = sum([stats.get(f"{status.replace(' ', '_').replace('-', '_')}_dollars", 0) for status in all_statuses])
-        total_minutes = sum([stats.get(f"{status.replace(' ', '_').replace('-', '_')}_minutes", 0) for status in all_statuses])
-        total_hours = total_minutes / 60
-        
-        summary_data.append({
-            'Subject': subject,
-            'Total_Cases': stats['count'],
-            'Total_Hours': total_hours,
-            'Total_Dollars': total_dollars,
-            'Approved_Count': stats.get('approved_count', 0),
-            'Denied_Count': stats.get('denied_count', 0),
-            'Pending_Count': stats.get('open_count', 0) + stats.get('in_review_count', 0),
-            'Approval_Rate': stats.get('approved_count', 0) / max(stats.get('approved_count', 0) + stats.get('denied_count', 0), 1)
-        })
-    
-    summary_df = pd.DataFrame(summary_data)
-    summary_csv = convert_df_to_csv(summary_df)
-    st.download_button(
-        label="📊 Download Analytics Summary as CSV",
-        data=summary_csv,
-        file_name=f'sts_analytics_summary_{datetime.now().strftime("%Y%m%d_%H%M%S")}.csv',
-        mime='text/csv'
-    )
-
-def test_data_source_connection(username, password, export_path):
-    """Test connection to the data source"""
-    with st.spinner("Testing connection to data source..."):
-        import time
-        time.sleep(2)  # Simulate connection test
-        
-        # In a real implementation, this would:
-        # 1. Test network connectivity
-        # 2. Validate credentials
-        # 3. Check access to the data source
-        # 4. Verify export path accessibility
-        
-        # Simulate some basic checks
-        connection_results = []
-        
-        # Check export path
-        try:
-            if os.path.exists(export_path):
-                connection_results.append(("✅", "Export Path", "Directory exists and is accessible"))
-            else:
-                connection_results.append(("⚠️", "Export Path", f"Directory '{export_path}' does not exist (will be created)"))
-        except Exception as e:
-            connection_results.append(("❌", "Export Path", f"Error accessing path: {str(e)}"))
-        
-        # Simulate credential validation
-        if username and password:
-            if len(username) >= 3 and len(password) >= 6:
-                connection_results.append(("✅", "Credentials", "Username and password format valid"))
-            else:
-                connection_results.append(("⚠️", "Credentials", "Username/password may be too short"))
-        else:
-            connection_results.append(("❌", "Credentials", "Username and password are required"))
-        
-        # Simulate network connectivity test
-        try:
-            import socket
-            socket.create_connection(("8.8.8.8", 53), timeout=3)
-            connection_results.append(("✅", "Network", "Internet connectivity confirmed"))
-        except:
-            connection_results.append(("⚠️", "Network", "Limited network connectivity detected"))
-        
-        # Display results
-        st.subheader("🔍 Connection Test Results")
-        for icon, component, message in connection_results:
-            st.write(f"{icon} **{component}**: {message}")
-        
-        # Overall status
-        success_count = sum(1 for icon, _, _ in connection_results if icon == "✅")
-        warning_count = sum(1 for icon, _, _ in connection_results if icon == "⚠️")
-        error_count = sum(1 for icon, _, _ in connection_results if icon == "❌")
-        
-        if error_count > 0:
-            st.error(f"❌ Connection test failed: {error_count} errors found. Please resolve issues before proceeding.")
-        elif warning_count > 0:
-            st.warning(f"⚠️ Connection test completed with warnings: {warning_count} issues detected. Data collection may still work.")
-        else:
-            st.success("✅ All connection tests passed! Ready for data collection.")
-        
-        # Add note about real implementation
-        with st.expander("ℹ️ About Connection Testing"):
-            st.info("""
-            In the full implementation, this would test:
-            • Connection to the actual STS claims system
-            • Authentication with provided credentials
-            • Selenium WebDriver availability
-            • Browser compatibility
-            • Data source accessibility
-            • Write permissions to export directory
-            """)
-
-def run_data_collection(relief_rate, export_path, username, password, headless_mode, max_pages):
-    """Run actual data collection when not in demo mode"""
-    if not username or not password:
-        st.error("Please provide username and password for data collection.")
-        return
-    
-    if not export_path:
-        st.error("Please provide an export path for data collection.")
-        return
-    
-    # Clear any existing demo data
-    if 'claims_data' in st.session_state:
-        del st.session_state['claims_data']
-    
-    # Initialize collection status in session state
-    st.session_state.collection_status = {
-        'running': True,
-        'start_time': datetime.now(),
-        'current_step': 'Initializing...',
-        'pages_processed': 0,
-        'records_found': 0,
-        'errors': [],
-        'headless_mode': headless_mode
-    }
-    
-    # Show initial status
-    st.success("🚀 Data collection started!")
-    
-    if headless_mode:
-        st.info("""
-        **🔍 Headless Mode Active** - Browser running in background
-        
-        Since no browser window will open, monitor progress using:
-        • **Real-time Status tab** - Live progress updates
-        • **Status indicators** below
-        • **Log messages** as they appear
-        """)
-    else:
-        st.info("**🌐 Browser Mode** - You should see a browser window open shortly")
-    
-    # Create progress container
-    progress_container = st.container()
-    
-    with progress_container:
-        st.subheader("📊 Collection Progress")
-        
-        # Progress bar
-        progress_bar = st.progress(0)
-        status_text = st.empty()
-        
-        # Metrics columns
-        col1, col2, col3, col4 = st.columns(4)
-        with col1:
-            step_metric = st.empty()
-        with col2:
-            pages_metric = st.empty()
-        with col3:
-            records_metric = st.empty()
-        with col4:
-            time_metric = st.empty()
-        
-        # Simulate the data collection process with real-time updates
-        steps = [
-            ("Initializing browser...", 10),
-            ("Logging into system...", 20),
-            ("Navigating to claims section...", 30),
-            ("Loading claims data...", 50),
-            ("Processing page 1...", 60),
-            ("Processing page 2...", 70),
-            ("Processing page 3...", 80),
-            ("Saving data to export path...", 90),
-            ("Finalizing and cleanup...", 100)
-        ]
-        
-        for i, (step, progress) in enumerate(steps):
-            # Update session state
-            st.session_state.collection_status['current_step'] = step
-            st.session_state.collection_status['pages_processed'] = min(i, 3)
-            st.session_state.collection_status['records_found'] = i * 15  # Simulate finding records
-            
-            # Update UI
-            progress_bar.progress(progress)
-            status_text.text(f"Current: {step}")
-            
-            step_metric.metric("Current Step", f"{i+1}/9")
-            pages_metric.metric("Pages Processed", st.session_state.collection_status['pages_processed'])
-            records_metric.metric("Records Found", st.session_state.collection_status['records_found'])
-            
-            elapsed = datetime.now() - st.session_state.collection_status['start_time']
-            time_metric.metric("Elapsed Time", f"{elapsed.seconds}s")
-            
-            # Add some delay to simulate real processing
-            import time
-            time.sleep(1)
-        
-        # Complete the process
-        st.session_state.collection_status['running'] = False
-        st.session_state.collection_status['current_step'] = 'Completed'
-        
-        st.success("✅ Data collection completed successfully!")
-        
-        # Show final summary
-        st.info(f"""
-        **📋 Collection Summary:**
-        • Total time: {elapsed.seconds} seconds
-        • Pages processed: {st.session_state.collection_status['pages_processed']}
-        • Records collected: {st.session_state.collection_status['records_found']}
-        • Mode: {'Headless' if headless_mode else 'With Browser'}
-        • Export path: {export_path}
-        """)
-        
-        st.warning("""
-        **⚠️ Implementation Note:**
-        This is a demonstration of the monitoring interface. In the full implementation:
-        • Your original script would run with real progress tracking
-        • Browser automation would be monitored in real-time  
-        • Actual data would be collected and displayed
-        • Error handling and retry logic would be included
-        """)
-        
-        # Button to view real-time status
-        if st.button("📊 View Detailed Status"):
-            st.rerun()
-
-def load_latest_data(export_path):
-    """Load latest data from export path when not in demo mode"""
-    if not export_path:
-        st.error("Please provide an export path to load data from.")
-        return
-    
-    # Clear any existing demo data
-    if 'claims_data' in st.session_state:
-        del st.session_state['claims_data']
-    
-    st.info("📊 Loading latest data...")
-    st.info("⚠️ Note: This is a placeholder for the actual data loading functionality.")
-    st.info("In the full implementation, this would:")
-    st.write("• Look for the latest data files in the specified export path")
-    st.write("• Load and validate the data")
-    st.write("• Display the loaded data in the dashboard")
-    
-    # Placeholder for actual implementation
-    st.warning("Real data loading functionality would be implemented here based on your original script.")
-
-# Run the main app
 if __name__ == "__main__":
     main()
