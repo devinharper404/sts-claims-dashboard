@@ -1056,7 +1056,7 @@ def show_overview_tab():
         
         # Top 20 Pilots by Cases Submitted
         if analytics['top_20_pilots_by_cases']:
-            st.subheader("🏆 Top 20 Pilots by Cases Submitted")
+            st.subheader("Top 20 Pilots by Cases Submitted")
             top_pilots_df = pd.DataFrame(list(analytics['top_20_pilots_by_cases'].items()), 
                                        columns=['Pilot', 'Cases Submitted'])
             top_pilots_df = top_pilots_df.sort_values('Cases Submitted', ascending=False)
@@ -1170,7 +1170,7 @@ def show_analytics_tab():
         analytics = calculate_comprehensive_analytics(df, relief_rate)
         
         # Top 20 highest value claims
-        st.subheader("🏆 Top 20 Highest Value Claims")
+        st.subheader("Top 20 Highest Value Claims")
         if analytics['top_20_claims']:
             top_claims_df = pd.DataFrame(analytics['top_20_claims'])
             
@@ -1684,7 +1684,7 @@ def show_analytics_tab():
         
         # Top 20 Pilots by Cases Submitted (Detailed View)
         if analytics.get('top_20_pilots_by_cases'):
-            st.subheader("🏆 Top 20 Pilots by Cases Submitted (Detailed)")
+            st.subheader("Top 20 Pilots by Cases Submitted (Detailed)")
             
             # Create enhanced pilot statistics
             pilot_detailed = []
@@ -2158,7 +2158,7 @@ def show_financial_tab():
         
         # Top pilots by cost
         if cost_data.get('top_pilots_by_cost'):
-            st.subheader("🏆 Top Pilots by Cost")
+            st.subheader("Top Pilots by Cost")
             pilots_df = pd.DataFrame(cost_data['top_pilots_by_cost'])
             
             # Format the total_cost column for display
@@ -3362,7 +3362,7 @@ def show_comprehensive_analytics_tab():
         st.dataframe(multiple_cases_df, use_container_width=True)
     
     # === TOP 20 PILOTS BY RELIEF (OVERALL AND BY STATUS) ===
-    with st.expander("🏆 Top 20 Pilots by Relief Requested", expanded=True):
+    with st.expander("Top 20 Pilots by Relief Requested", expanded=True):
         st.subheader("Top Pilots by Relief Amount")
         
         # Overall top 20
