@@ -1062,14 +1062,14 @@ def show_analytics_tab():
         st.subheader("🏆 Top 20 Highest Value Claims")
         if analytics['top_20_claims']:
             top_claims_df = pd.DataFrame(analytics['top_20_claims'])
-            # Format relief_dollars column for display
+            # Format Relief_Dollars column for display
             top_claims_display_df = top_claims_df.copy()
-            if 'relief_dollars' in top_claims_display_df.columns:
-                top_claims_display_df['relief_dollars'] = top_claims_display_df['relief_dollars'].apply(lambda x: f"${x:,.2f}" if pd.notnull(x) else "$0.00")
+            if 'Relief_Dollars' in top_claims_display_df.columns:
+                top_claims_display_df['Relief_Dollars'] = top_claims_display_df['Relief_Dollars'].apply(lambda x: f"${x:,.2f}" if pd.notnull(x) else "$0.00")
             st.dataframe(top_claims_display_df, use_container_width=True)
             
             # Chart for top 10 (use original numeric values)
-            fig = px.bar(top_claims_df.head(10), x='case_number', y='relief_dollars',
+            fig = px.bar(top_claims_df.head(10), x='case_number', y='Relief_Dollars',
                         title="Top 10 Claims by Relief Value", hover_data=['pilot', 'subject'])
             fig.update_xaxes(tickangle=45)
             # Format y-axis to show currency
