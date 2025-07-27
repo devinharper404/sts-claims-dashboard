@@ -1681,8 +1681,8 @@ def show_analytics_tab():
         
         if total_impasse > 0:
             # Subject breakdown of impasse cases
-            st.subheader("📊 Impasse Cases by Subject")
-            impasse_by_subject = impasse_df.groupby('subject').agg({
+            st.subheader("📊 Impasse Cases by Subject Group")
+            impasse_by_subject = impasse_df.groupby('Subject_Grouped').agg({
                 'case_number': 'count',
                 'relief_minutes': ['sum', 'mean']
             }).round(2)
@@ -1719,18 +1719,18 @@ def show_analytics_tab():
             with col1:
                 # Impasse cases by subject (bar chart)
                 fig = px.bar(impasse_by_subject.head(10).reset_index(), 
-                           x='subject', y='Case_Count',
-                           title="Top 10 Subjects by Impasse Cases",
-                           labels={'Case_Count': 'Number of Cases', 'subject': 'Subject'})
+                           x='Subject_Grouped', y='Case_Count',
+                           title="Top 10 Subject Groups by Impasse Cases",
+                           labels={'Case_Count': 'Number of Cases', 'Subject_Grouped': 'Subject Group'})
                 fig.update_xaxes(tickangle=45)
                 st.plotly_chart(fig, use_container_width=True)
             
             with col2:
                 # Impasse relief by subject (bar chart)
                 fig = px.bar(impasse_by_subject.head(10).reset_index(), 
-                           x='subject', y='Total_Relief_Dollars',
-                           title="Top 10 Subjects by Impasse Relief Value",
-                           labels={'Total_Relief_Dollars': 'Total Relief ($)', 'subject': 'Subject'})
+                           x='Subject_Grouped', y='Total_Relief_Dollars',
+                           title="Top 10 Subject Groups by Impasse Relief Value",
+                           labels={'Total_Relief_Dollars': 'Total Relief ($)', 'Subject_Grouped': 'Subject Group'})
                 fig.update_xaxes(tickangle=45)
                 fig.update_yaxes(tickformat="$,.0f")
                 st.plotly_chart(fig, use_container_width=True)
@@ -1792,36 +1792,76 @@ def show_analytics_tab():
             # Impasse rate by subject comparison
             st.subheader("⚖️ Impasse Rates by Subject")
             
-            # Calculate impasse rates by subject
-            subject_totals = df.groupby('subject').size()
-            subject_impasse = impasse_df.groupby('subject').size()
-            subject_rates = pd.DataFrame({
-                'Total_Cases': subject_totals,
-                'Impasse_Cases': subject_impasse
-            }).fillna(0)
+            # Create tabs for grouped vs raw subjects
+            tab1, tab2 = st.tabs(["📊 Subject Groups", "📋 Raw Subjects"])
             
-            subject_rates['Impasse_Rate'] = (subject_rates['Impasse_Cases'] / subject_rates['Total_Cases'] * 100).round(1)
-            subject_rates = subject_rates[subject_rates['Total_Cases'] >= 5]  # Only subjects with 5+ cases
-            subject_rates = subject_rates.sort_values('Impasse_Rate', ascending=False)
+            with tab1:
+                st.write("**Impasse rates grouped by subject categories**")
+                
+                # Calculate impasse rates by subject groups
+                subject_totals_grouped = df.groupby('Subject_Grouped').size()
+                subject_impasse_grouped = impasse_df.groupby('Subject_Grouped').size()
+                subject_rates_grouped = pd.DataFrame({
+                    'Total_Cases': subject_totals_grouped,
+                    'Impasse_Cases': subject_impasse_grouped
+                }).fillna(0)
+                
+                subject_rates_grouped['Impasse_Rate'] = (subject_rates_grouped['Impasse_Cases'] / subject_rates_grouped['Total_Cases'] * 100).round(1)
+                subject_rates_grouped = subject_rates_grouped[subject_rates_grouped['Total_Cases'] >= 5]  # Only subjects with 5+ cases
+                subject_rates_grouped = subject_rates_grouped.sort_values('Impasse_Rate', ascending=False)
+                
+                # Create display dataframe for grouped
+                subject_rates_grouped_display = subject_rates_grouped.copy()
+                subject_rates_grouped_display['Impasse_Rate'] = subject_rates_grouped_display['Impasse_Rate'].apply(lambda x: f"{x}%")
+                subject_rates_grouped_display = subject_rates_grouped_display.rename(columns={
+                    'Total_Cases': 'Total Cases',
+                    'Impasse_Cases': 'Impasse Cases',
+                    'Impasse_Rate': 'Impasse Rate'
+                })
+                
+                st.dataframe(subject_rates_grouped_display.head(20), use_container_width=True)
+                
+                # Chart for grouped impasse rates
+                fig = px.bar(subject_rates_grouped.head(15).reset_index(), 
+                           x='Subject_Grouped', y='Impasse_Rate',
+                           title="Top 15 Subject Groups by Impasse Rate (Min 5 Cases)",
+                           labels={'Impasse_Rate': 'Impasse Rate (%)', 'Subject_Grouped': 'Subject Group'})
+                fig.update_xaxes(tickangle=45)
+                st.plotly_chart(fig, use_container_width=True)
             
-            # Create display dataframe
-            subject_rates_display = subject_rates.copy()
-            subject_rates_display['Impasse_Rate'] = subject_rates_display['Impasse_Rate'].apply(lambda x: f"{x}%")
-            subject_rates_display = subject_rates_display.rename(columns={
-                'Total_Cases': 'Total Cases',
-                'Impasse_Cases': 'Impasse Cases',
-                'Impasse_Rate': 'Impasse Rate'
-            })
-            
-            st.dataframe(subject_rates_display.head(20), use_container_width=True)
-            
-            # Chart for impasse rates
-            fig = px.bar(subject_rates.head(15).reset_index(), 
-                       x='subject', y='Impasse_Rate',
-                       title="Top 15 Subjects by Impasse Rate (Min 5 Cases)",
-                       labels={'Impasse_Rate': 'Impasse Rate (%)', 'subject': 'Subject'})
-            fig.update_xaxes(tickangle=45)
-            st.plotly_chart(fig, use_container_width=True)
+            with tab2:
+                st.write("**Impasse rates by individual subject codes**")
+                
+                # Calculate impasse rates by raw subjects
+                subject_totals_raw = df.groupby('subject').size()
+                subject_impasse_raw = impasse_df.groupby('subject').size()
+                subject_rates_raw = pd.DataFrame({
+                    'Total_Cases': subject_totals_raw,
+                    'Impasse_Cases': subject_impasse_raw
+                }).fillna(0)
+                
+                subject_rates_raw['Impasse_Rate'] = (subject_rates_raw['Impasse_Cases'] / subject_rates_raw['Total_Cases'] * 100).round(1)
+                subject_rates_raw = subject_rates_raw[subject_rates_raw['Total_Cases'] >= 3]  # Lower threshold for raw subjects
+                subject_rates_raw = subject_rates_raw.sort_values('Impasse_Rate', ascending=False)
+                
+                # Create display dataframe for raw
+                subject_rates_raw_display = subject_rates_raw.copy()
+                subject_rates_raw_display['Impasse_Rate'] = subject_rates_raw_display['Impasse_Rate'].apply(lambda x: f"{x}%")
+                subject_rates_raw_display = subject_rates_raw_display.rename(columns={
+                    'Total_Cases': 'Total Cases',
+                    'Impasse_Cases': 'Impasse Cases',
+                    'Impasse_Rate': 'Impasse Rate'
+                })
+                
+                st.dataframe(subject_rates_raw_display.head(25), use_container_width=True)
+                
+                # Chart for raw impasse rates
+                fig = px.bar(subject_rates_raw.head(20).reset_index(), 
+                           x='subject', y='Impasse_Rate',
+                           title="Top 20 Individual Subjects by Impasse Rate (Min 3 Cases)",
+                           labels={'Impasse_Rate': 'Impasse Rate (%)', 'subject': 'Subject'})
+                fig.update_xaxes(tickangle=45)
+                st.plotly_chart(fig, use_container_width=True)
         
         else:
             st.info("No impasse cases found in the current dataset.")
