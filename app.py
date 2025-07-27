@@ -2224,25 +2224,70 @@ def show_financial_tab():
                 with tab2:
                     st.write("**Forecasted costs by individual violation codes**")
                     
-                    # Use the original forecast_data which contains raw individual subjects
-                    raw_forecast_df = pd.DataFrame(list(forecast_data.items()), 
-                                                 columns=['Subject', 'Forecasted Cost'])
-                    raw_forecast_df = raw_forecast_df[raw_forecast_df['Forecasted Cost'] > 0].sort_values('Forecasted Cost', ascending=False)
+                    # Calculate raw subject forecasting separately
+                    raw_forecasted_cost = {}
                     
-                    # Format Forecasted Cost column for display
-                    raw_forecast_display_df = raw_forecast_df.copy()
-                    raw_forecast_display_df['Forecasted Cost'] = raw_forecast_display_df['Forecasted Cost'].apply(lambda x: f"${x:,.2f}")
+                    # Get the original dataframe for raw subject calculations
+                    df_raw = get_data()
+                    if not df_raw.empty:
+                        # Add canonical status for consistency
+                        df_raw['Status_Canonical'] = df_raw['status'].apply(status_canonical)
+                        
+                        # Calculate probabilities and forecasts for raw subjects
+                        for subject in df_raw['subject'].unique():
+                            if pd.isna(subject):
+                                continue
+                                
+                            subject_data = df_raw[df_raw['subject'] == subject]
+                            
+                            # Calculate approval probability for this raw subject
+                            approved = len(subject_data[subject_data['Status_Canonical'] == 'Approved'])
+                            denied = len(subject_data[subject_data['Status_Canonical'] == 'Denied'])
+                            impasse = len(subject_data[subject_data['Status_Canonical'] == 'Impasse'])
+                            total_decided = approved + denied + impasse
+                            
+                            prob = approved / total_decided if total_decided > 0 else 0
+                            
+                            # Count unresolved cases
+                            open_cases = len(subject_data[subject_data['Status_Canonical'] == 'Open'])
+                            in_review_cases = len(subject_data[subject_data['Status_Canonical'] == 'In Review'])
+                            unresolved = open_cases + in_review_cases
+                            
+                            # Calculate average relief for this subject
+                            if 'relief_dollars' in subject_data.columns:
+                                avg_relief = subject_data['relief_dollars'].mean()
+                            elif 'relief_minutes' in subject_data.columns:
+                                relief_rate = st.session_state.get('relief_rate', 320.47)
+                                avg_relief = subject_data['relief_minutes'].mean() * relief_rate / 60
+                            else:
+                                avg_relief = 0
+                            
+                            # Calculate forecasted cost
+                            if unresolved > 0 and prob > 0 and avg_relief > 0:
+                                raw_forecasted_cost[subject] = prob * unresolved * avg_relief
                     
-                    col1, col2 = st.columns([1, 1])
-                    with col1:
-                        st.dataframe(raw_forecast_display_df, use_container_width=True)
-                    with col2:
-                        if len(raw_forecast_df) > 0:
-                            # Use original numeric values for chart
-                            fig = px.bar(raw_forecast_df.head(8), x='Forecasted Cost', y='Subject',
-                                       title="Top Forecasted Costs by Individual Violation", orientation='h')
-                            fig.update_xaxes(tickformat="$,.0f")
-                            st.plotly_chart(fig, use_container_width=True)
+                    if raw_forecasted_cost and any(v > 0 for v in raw_forecasted_cost.values()):
+                        # Create dataframe for raw forecasts
+                        raw_forecast_df = pd.DataFrame(list(raw_forecasted_cost.items()), 
+                                                     columns=['Subject', 'Forecasted Cost'])
+                        raw_forecast_df = raw_forecast_df[raw_forecast_df['Forecasted Cost'] > 0].sort_values('Forecasted Cost', ascending=False)
+                        
+                        # Format Forecasted Cost column for display
+                        raw_forecast_display_df = raw_forecast_df.copy()
+                        raw_forecast_display_df['Forecasted Cost'] = raw_forecast_display_df['Forecasted Cost'].apply(lambda x: f"${x:,.2f}")
+                        
+                        col1, col2 = st.columns([1, 1])
+                        with col1:
+                            st.dataframe(raw_forecast_display_df, use_container_width=True)
+                        with col2:
+                            if len(raw_forecast_df) > 0:
+                                # Use original numeric values for chart
+                                fig = px.bar(raw_forecast_df.head(8), x='Forecasted Cost', y='Subject',
+                                           title="Top Forecasted Costs by Individual Violation", orientation='h')
+                                fig.update_xaxes(tickformat="$,.0f")
+                                st.plotly_chart(fig, use_container_width=True)
+                    else:
+                        st.info("No positive raw subject forecasted costs to display")
             else:
                 st.info("No positive forecasted costs to display")
         
