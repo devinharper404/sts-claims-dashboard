@@ -441,7 +441,9 @@ def calculate_comprehensive_analytics(df, relief_rate=320.47):
         'median_relief': df['Relief_Dollars'].median(),
         'unique_employees': len(pilot_counts),
         'employees_with_multiple_cases': len(multiple_case_employees),
-        'percentage_multiple_cases': (sum(multiple_case_employees[emp]['case_count'] for emp in multiple_case_employees) / total_cases * 100) if total_cases > 0 else 0
+        'percentage_multiple_cases': (sum(multiple_case_employees[emp]['case_count'] for emp in multiple_case_employees) / total_cases * 100) if total_cases > 0 else 0,
+        # Cost analytics
+        'cost_analytics': cost_analytics
     }
 
 def calculate_cost_analytics(df, subject_stats, probability_by_subject, avg_relief_minutes_per_subject, relief_rate):
@@ -1030,8 +1032,8 @@ def show_overview_tab():
         avg_relief_hours = analytics['avg_relief'] / relief_rate
         median_relief_hours = analytics['median_relief'] / relief_rate
         
-        # Get cost data for additional metrics
-        cost_data = calculate_cost_analytics(df, relief_rate)
+        # Get cost data from analytics
+        cost_data = analytics['cost_analytics']
         
         with col1:
             st.metric("Total Claims", analytics['total_claims'])
