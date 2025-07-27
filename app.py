@@ -1654,10 +1654,14 @@ def show_analytics_tab():
         # ===== IMPASSE ANALYTICS SECTION =====
         st.subheader("⚖️ Impasse Case Analytics")
         
+        # Add Subject_Grouped column to dataframe for impasse analysis
+        df_with_groups = df.copy()
+        df_with_groups['Subject_Grouped'] = df_with_groups['subject'].apply(group_subject_key)
+        
         # Filter for impasse cases
-        impasse_df = df[df['status'].str.lower() == 'impasse'].copy()
+        impasse_df = df_with_groups[df_with_groups['status'].str.lower() == 'impasse'].copy()
         total_impasse = len(impasse_df)
-        total_cases = len(df)
+        total_cases = len(df_with_groups)
         impasse_rate = (total_impasse / total_cases * 100) if total_cases > 0 else 0
         
         # Overview metrics
@@ -1753,9 +1757,9 @@ def show_analytics_tab():
                 monthly_impasse['relief_dollars'] = monthly_impasse['relief_minutes'] * relief_rate / 60
                 
                 # Also calculate overall monthly submission rates for comparison
-                df['date_submitted'] = pd.to_datetime(df['date_submitted'], errors='coerce')
-                df['month_year'] = df['date_submitted'].dt.to_period('M')
-                monthly_total = df.groupby('month_year').size().reset_index(name='total_cases')
+                df_with_groups['date_submitted'] = pd.to_datetime(df_with_groups['date_submitted'], errors='coerce')
+                df_with_groups['month_year'] = df_with_groups['date_submitted'].dt.to_period('M')
+                monthly_total = df_with_groups.groupby('month_year').size().reset_index(name='total_cases')
                 monthly_total['month_year_str'] = monthly_total['month_year'].astype(str)
                 
                 # Merge for impasse rate calculation
@@ -1799,7 +1803,7 @@ def show_analytics_tab():
                 st.write("**Impasse rates grouped by subject categories**")
                 
                 # Calculate impasse rates by subject groups
-                subject_totals_grouped = df.groupby('Subject_Grouped').size()
+                subject_totals_grouped = df_with_groups.groupby('Subject_Grouped').size()
                 subject_impasse_grouped = impasse_df.groupby('Subject_Grouped').size()
                 subject_rates_grouped = pd.DataFrame({
                     'Total_Cases': subject_totals_grouped,
@@ -1833,7 +1837,7 @@ def show_analytics_tab():
                 st.write("**Impasse rates by individual subject codes**")
                 
                 # Calculate impasse rates by raw subjects
-                subject_totals_raw = df.groupby('subject').size()
+                subject_totals_raw = df_with_groups.groupby('subject').size()
                 subject_impasse_raw = impasse_df.groupby('subject').size()
                 subject_rates_raw = pd.DataFrame({
                     'Total_Cases': subject_totals_raw,
