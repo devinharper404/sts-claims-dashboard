@@ -1462,18 +1462,41 @@ def show_analytics_tab():
                 total_relief = pilot_data['relief_dollars'].sum() if 'relief_dollars' in pilot_data.columns else 0
                 avg_relief = pilot_data['relief_dollars'].mean() if 'relief_dollars' in pilot_data.columns else 0
                 
+                # Use the correct status column name (status instead of Status_Canonical)
+                # Apply status canonicalization for consistent comparison
+                status_col = 'status'
+                if status_col in pilot_data.columns:
+                    # Create temporary canonical status for counting
+                    pilot_data_temp = pilot_data.copy()
+                    pilot_data_temp['status_canonical'] = pilot_data_temp[status_col].apply(
+                        lambda x: 'approved' if str(x).lower() in ['approved', 'paid'] 
+                        else 'denied' if str(x).lower() in ['denied', 'rejected'] 
+                        else 'open'
+                    )
+                    
+                    approved_count = len(pilot_data_temp[pilot_data_temp['status_canonical'] == 'approved'])
+                    denied_count = len(pilot_data_temp[pilot_data_temp['status_canonical'] == 'denied'])
+                    open_count = len(pilot_data_temp[pilot_data_temp['status_canonical'] == 'open'])
+                    
+                    # Calculate approval rate
+                    total_decided = approved_count + denied_count
+                    approval_rate = (approved_count / total_decided * 100) if total_decided > 0 else 0
+                else:
+                    # Fallback if status column doesn't exist
+                    approved_count = 0
+                    denied_count = 0
+                    open_count = case_count
+                    approval_rate = 0
+                
                 pilot_detailed.append({
                     'Pilot': pilot,
                     'Total Cases': case_count,
                     'Total Relief ($)': total_relief,
                     'Avg Relief ($)': avg_relief,
-                    'Approved Cases': len(pilot_data[pilot_data['Status_Canonical'] == 'approved']),
-                    'Denied Cases': len(pilot_data[pilot_data['Status_Canonical'] == 'denied']),
-                    'Open Cases': len(pilot_data[pilot_data['Status_Canonical'] == 'open']),
-                    'Approval Rate (%)': round(
-                        len(pilot_data[pilot_data['Status_Canonical'] == 'approved']) / 
-                        max(len(pilot_data[pilot_data['Status_Canonical'].isin(['approved', 'denied'])]), 1) * 100, 1
-                    )
+                    'Approved Cases': approved_count,
+                    'Denied Cases': denied_count,
+                    'Open Cases': open_count,
+                    'Approval Rate (%)': round(approval_rate, 1)
                 })
             
             pilot_detailed_df = pd.DataFrame(pilot_detailed)
