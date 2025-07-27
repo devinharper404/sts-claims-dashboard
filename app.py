@@ -307,9 +307,11 @@ def calculate_comprehensive_analytics(df, relief_rate=320.47):
     outlier_threshold_high = relief_q3 + 1.5 * iqr
     outlier_threshold_low = relief_q1 - 1.5 * iqr
     
+    # Exclude denied cases from outlier analysis
+    non_denied_df = df[df['status'].str.lower() != 'denied'] if 'status' in df.columns else df
     outlier_analysis = {
-        'high_cost_outliers': df[df['Relief_Dollars'] > outlier_threshold_high].to_dict('records'),
-        'low_cost_outliers': df[df['Relief_Dollars'] < outlier_threshold_low].to_dict('records'),
+        'high_cost_outliers': non_denied_df[non_denied_df['Relief_Dollars'] > outlier_threshold_high].to_dict('records'),
+        'low_cost_outliers': non_denied_df[non_denied_df['Relief_Dollars'] < outlier_threshold_low].to_dict('records'),
         'outlier_threshold_high': outlier_threshold_high,
         'outlier_threshold_low': outlier_threshold_low
     }
@@ -336,8 +338,9 @@ def calculate_comprehensive_analytics(df, relief_rate=320.47):
         else:
             top20_pilots_by_status[status] = {}
     
-    # Top 20 highest value claims
-    top_20_claims = df.nlargest(20, 'Relief_Dollars')[['case_number', 'pilot', 'subject', 'Relief_Dollars', 'status']].to_dict('records')
+    # Top 20 highest value claims (exclude denied cases)
+    non_denied_df = df[df['status'].str.lower() != 'denied'] if 'status' in df.columns else df
+    top_20_claims = non_denied_df.nlargest(20, 'Relief_Dollars')[['case_number', 'pilot', 'subject', 'Relief_Dollars', 'status']].to_dict('records')
     
     # Multiple case employees (pilots with more than one case)
     multiple_case_employees = {}
@@ -380,10 +383,15 @@ def calculate_comprehensive_analytics(df, relief_rate=320.47):
         except:
             pass
     
-    # ===== OLDEST INCIDENT CASES =====
+    # ===== OLDEST INCIDENT CASES (OPEN ONLY) =====
     incident_cases = []
     for _, row in df.iterrows():
         try:
+            # Only include cases with 'open' status
+            status = str(row.get('status', '')).lower()
+            if status != 'open':
+                continue
+                
             date_str = str(row.get('submission_date', ''))
             if date_str and date_str != 'nan':
                 date_obj = datetime.strptime(date_str.split()[0], "%Y-%m-%d")
@@ -652,13 +660,14 @@ def calculate_cost_analytics(df, subject_stats, probability_by_subject, avg_reli
     status_costs = df.groupby('Status_Canonical')['Relief_Dollars'].sum().to_dict()
     status_avg_costs = df.groupby('Status_Canonical')['Relief_Dollars'].mean().to_dict()
     
-    # Outlier cases (high cost) - using statistical outlier detection
-    reliefs = df[df['Relief_Dollars'] > 0]['Relief_Dollars'].tolist()
+    # Outlier cases (high cost) - using statistical outlier detection (exclude denied cases)
+    non_denied_df = df[df['Status_Canonical'].str.lower() != 'denied'] if 'Status_Canonical' in df.columns else df
+    reliefs = non_denied_df[non_denied_df['Relief_Dollars'] > 0]['Relief_Dollars'].tolist()
     if reliefs:
         mean_relief = sum(reliefs) / len(reliefs)
         std_relief = (sum((x - mean_relief) ** 2 for x in reliefs) / len(reliefs)) ** 0.5
         outlier_threshold = mean_relief + 2 * std_relief
-        outlier_cases = df[df['Relief_Dollars'] > outlier_threshold].to_dict('records')
+        outlier_cases = non_denied_df[non_denied_df['Relief_Dollars'] > outlier_threshold].to_dict('records')
     else:
         outlier_cases = []
     
@@ -1071,41 +1080,101 @@ def show_overview_tab():
                 fig.update_layout(height=400)
                 st.plotly_chart(fig, use_container_width=True)
         
-        # Multiple Case Employees (Enhanced)
+        # Multiple Case Employees (Consolidated)
         if analytics['multiple_case_employees']:
-            st.subheader("👥 Multiple Case Employees (Detailed)")
+            st.subheader("👥 Multiple Case Employees Analysis")
             
-            # Create detailed dataframe
-            multi_employees_data = []
-            for pilot, details in analytics['multiple_case_employees'].items():
-                multi_employees_data.append({
-                    'Pilot': pilot,
-                    'Cases': details['case_count'],
-                    'Total Relief ($)': f"${details['total_relief']:,.2f}",
-                    'Avg Relief ($)': f"${details['avg_relief']:,.2f}",
-                    'Subjects': ', '.join(details['subjects'][:3]) + ('...' if len(details['subjects']) > 3 else ''),
-                    'Statuses': ', '.join(details['statuses'])
-                })
+            # Create tabs for different views
+            tab1, tab2, tab3 = st.tabs(["📊 Overview", "🔍 Detailed Analysis", "📈 Statistical Breakdown"])
             
-            multi_df = pd.DataFrame(multi_employees_data)
-            multi_df = multi_df.sort_values('Cases', ascending=False)
-            
-            # Display table and chart
-            col1, col2 = st.columns([2, 1])
-            with col1:
-                st.dataframe(multi_df, use_container_width=True, height=300)
-            with col2:
-                # Chart showing case distribution
-                case_dist = pd.DataFrame(list(analytics['multiple_case_employees'].items()))
-                case_dist.columns = ['Pilot', 'Details']
-                case_dist['Cases'] = case_dist['Details'].apply(lambda x: x['case_count'])
-                case_dist['Relief'] = case_dist['Details'].apply(lambda x: x['total_relief'])
+            with tab1:
+                # Summary metrics
+                multi_employees = analytics['multiple_case_employees']
+                col1, col2, col3, col4 = st.columns(4)
+                with col1:
+                    st.metric("Pilots with Multiple Cases", len(multi_employees))
+                with col2:
+                    total_multi_cases = sum(details['case_count'] for details in multi_employees.values())
+                    st.metric("Total Cases (Multi-Case Pilots)", total_multi_cases)
+                with col3:
+                    total_multi_relief = sum(details['total_relief'] for details in multi_employees.values())
+                    st.metric("Total Relief (Multi-Case)", f"${total_multi_relief:,.0f}")
+                with col4:
+                    avg_cases_per_pilot = total_multi_cases / len(multi_employees) if multi_employees else 0
+                    st.metric("Avg Cases per Multi-Case Pilot", f"{avg_cases_per_pilot:.1f}")
                 
-                fig = px.scatter(case_dist, x='Cases', y='Relief', 
-                               hover_data=['Pilot'],
-                               title="Cases vs Relief Amount",
-                               labels={'Cases': 'Number of Cases', 'Relief': 'Total Relief ($)'})
-                st.plotly_chart(fig, use_container_width=True)
+                # Basic table view
+                multi_employees_data = []
+                for pilot, details in analytics['multiple_case_employees'].items():
+                    multi_employees_data.append({
+                        'Pilot': pilot,
+                        'Cases': details['case_count'],
+                        'Total Relief ($)': f"${details['total_relief']:,.2f}",
+                        'Avg Relief ($)': f"${details['avg_relief']:,.2f}",
+                        'Primary Subjects': ', '.join(details['subjects'][:2]) + ('...' if len(details['subjects']) > 2 else '')
+                    })
+                
+                multi_df = pd.DataFrame(multi_employees_data)
+                multi_df = multi_df.sort_values('Cases', ascending=False)
+                st.dataframe(multi_df, use_container_width=True)
+            
+            with tab2:
+                # Detailed breakdown table
+                multi_detail = []
+                for pilot, details in multi_employees.items():
+                    multi_detail.append({
+                        'Pilot': pilot,
+                        'Number of Cases': details['case_count'],
+                        'Total Relief ($)': details['total_relief'],
+                        'Average Relief ($)': details['avg_relief'],
+                        'Subject Categories': len(details['subjects']),
+                        'Status Types': len(details['statuses']),
+                        'All Subjects': ', '.join(details['subjects']),
+                        'Status Distribution': ', '.join(details['statuses'])
+                    })
+                
+                multi_detail_df = pd.DataFrame(multi_detail)
+                multi_detail_df = multi_detail_df.sort_values('Number of Cases', ascending=False)
+                
+                st.dataframe(
+                    multi_detail_df, 
+                    use_container_width=True,
+                    column_config={
+                        'Total Relief ($)': st.column_config.NumberColumn(
+                            'Total Relief ($)',
+                            format="$%.2f"
+                        ),
+                        'Average Relief ($)': st.column_config.NumberColumn(
+                            'Average Relief ($)',
+                            format="$%.2f"
+                        )
+                    }
+                )
+            
+            with tab3:
+                # Charts and statistical analysis
+                col1, col2 = st.columns(2)
+                with col1:
+                    # Distribution of case counts
+                    case_counts = [details['case_count'] for details in multi_employees.values()]
+                    case_dist_counts = pd.Series(case_counts).value_counts().sort_index()
+                    fig = px.bar(x=case_dist_counts.index, y=case_dist_counts.values,
+                               title="Distribution of Case Counts",
+                               labels={'x': 'Number of Cases', 'y': 'Number of Pilots'})
+                    st.plotly_chart(fig, use_container_width=True)
+                
+                with col2:
+                    # Scatter plot: Cases vs Relief
+                    case_dist = pd.DataFrame(list(analytics['multiple_case_employees'].items()))
+                    case_dist.columns = ['Pilot', 'Details']
+                    case_dist['Cases'] = case_dist['Details'].apply(lambda x: x['case_count'])
+                    case_dist['Relief'] = case_dist['Details'].apply(lambda x: x['total_relief'])
+                    
+                    fig = px.scatter(case_dist, x='Cases', y='Relief', 
+                                   hover_data=['Pilot'],
+                                   title="Cases vs Relief Amount",
+                                   labels={'Cases': 'Number of Cases', 'Relief': 'Total Relief ($)'})
+                    st.plotly_chart(fig, use_container_width=True)
         
         # ===== TOTAL RELIEF REQUESTED BY SUBJECT OVERVIEW =====
         st.subheader("💰 Total Relief Requested by Subject - Overview")
@@ -1265,7 +1334,7 @@ def show_analytics_tab():
                 """)
         
         # ===== NEW: TOP 20 PILOTS BY RELIEF AMOUNT (FROM ORIGINAL SCRIPT) =====
-        st.subheader("🥇 Top 20 Pilots by Relief Amount - Overall")
+        st.subheader("Top 20 Pilots by Relief Amount - Overall")
         if analytics.get('top20_pilots_overall'):
             top_pilots_relief_df = pd.DataFrame(list(analytics['top20_pilots_overall'].items()), 
                                                columns=['Pilot', 'Total Relief ($)'])
@@ -1631,7 +1700,7 @@ def show_analytics_tab():
         
         # Outlier analysis
         if analytics.get('outlier_analysis') and analytics['outlier_analysis'].get('high_cost_outliers'):
-            st.subheader("🔍 High Cost Outlier Analysis")
+            st.subheader("High Cost Outlier Analysis")
             outliers = analytics['outlier_analysis']['high_cost_outliers']
             if outliers:
                 outliers_df = pd.DataFrame(outliers)
@@ -1755,79 +1824,6 @@ def show_analytics_tab():
                            title="Top 10 Pilots by Cases", orientation='h')
                 fig.update_layout(height=400)
                 st.plotly_chart(fig, use_container_width=True)
-        
-        # Multiple Case Employees Analysis
-        if analytics.get('multiple_case_employees'):
-            st.subheader("👥 Multiple Case Employees - Deep Dive")
-            
-            multi_employees = analytics['multiple_case_employees']
-            
-            # Summary metrics
-            col1, col2, col3, col4 = st.columns(4)
-            with col1:
-                st.metric("Pilots with Multiple Cases", len(multi_employees))
-            with col2:
-                total_multi_cases = sum(details['case_count'] for details in multi_employees.values())
-                st.metric("Total Cases (Multi-Case Pilots)", total_multi_cases)
-            with col3:
-                total_multi_relief = sum(details['total_relief'] for details in multi_employees.values())
-                st.metric("Total Relief (Multi-Case)", f"${total_multi_relief:,.0f}")
-            with col4:
-                avg_cases_per_pilot = total_multi_cases / len(multi_employees) if multi_employees else 0
-                st.metric("Avg Cases per Multi-Case Pilot", f"{avg_cases_per_pilot:.1f}")
-            
-            # Detailed breakdown
-            multi_detail = []
-            for pilot, details in multi_employees.items():
-                multi_detail.append({
-                    'Pilot': pilot,
-                    'Number of Cases': details['case_count'],
-                    'Total Relief ($)': details['total_relief'],
-                    'Average Relief ($)': details['avg_relief'],
-                    'Subject Categories': len(details['subjects']),
-                    'Status Types': len(details['statuses']),
-                    'Primary Subjects': ', '.join(details['subjects'][:2]),
-                    'Status Distribution': ', '.join(details['statuses'])
-                })
-            
-            multi_detail_df = pd.DataFrame(multi_detail)
-            multi_detail_df = multi_detail_df.sort_values('Number of Cases', ascending=False)
-            
-            # Display detailed table with proper column formatting for sorting
-            st.dataframe(
-                multi_detail_df, 
-                use_container_width=True,
-                column_config={
-                    'Total Relief ($)': st.column_config.NumberColumn(
-                        'Total Relief ($)',
-                        format="$%.2f"
-                    ),
-                    'Average Relief ($)': st.column_config.NumberColumn(
-                        'Average Relief ($)',
-                        format="$%.2f"
-                    )
-                }
-            )
-            
-            # Analysis charts
-            col1, col2 = st.columns(2)
-            with col1:
-                # Distribution of case counts
-                case_counts = [details['case_count'] for details in multi_employees.values()]
-                fig = px.histogram(x=case_counts, title="Distribution of Case Counts (Multi-Case Pilots)",
-                                 labels={'x': 'Number of Cases', 'y': 'Number of Pilots'})
-                st.plotly_chart(fig, use_container_width=True)
-            
-            with col2:
-                # Relief vs case count scatter
-                relief_data = [(details['case_count'], details['total_relief']) 
-                              for details in multi_employees.values()]
-                if relief_data:
-                    cases, relief = zip(*relief_data)
-                    fig = px.scatter(x=cases, y=relief, 
-                                   title="Cases vs Total Relief (Multi-Case Pilots)",
-                                   labels={'x': 'Number of Cases', 'y': 'Total Relief ($)'})
-                    st.plotly_chart(fig, use_container_width=True)
         
         # ===== IMPASSE ANALYTICS SECTION =====
         st.subheader("⚖️ Impasse Case Analytics")
@@ -2371,7 +2367,7 @@ def show_financial_tab():
         
         # Outlier Analysis
         if cost_data.get('outlier_cases'):
-            st.subheader("🔍 High Cost Outlier Cases")
+            st.subheader("High Cost Outlier Cases")
             outliers = cost_data['outlier_cases']
             if outliers:
                 outlier_df = pd.DataFrame(outliers)
@@ -3310,57 +3306,6 @@ def show_comprehensive_analytics_tab():
         subject_breakdown_df = pd.DataFrame(subject_breakdown_data)
         st.dataframe(subject_breakdown_df, use_container_width=True)
     
-    # === EMPLOYEE MULTIPLE CASES ANALYTICS ===
-    with st.expander("👥 Employee Multiple Cases Analytics", expanded=True):
-        st.subheader("Pilots with Multiple Case Submissions")
-        
-        # Summary metrics
-        col1, col2, col3, col4 = st.columns(4)
-        with col1:
-            unique_pilots = len(df['pilot'].unique())
-            st.metric("Unique Pilots", unique_pilots)
-        
-        with col2:
-            pilots_with_multiple = len([p for p, count in df['pilot'].value_counts().items() if count > 1])
-            st.metric("Pilots with Multiple Cases", pilots_with_multiple)
-        
-        with col3:
-            multiple_case_total = sum([count for count in df['pilot'].value_counts() if count > 1])
-            total_cases = len(df)
-            multiple_percentage = (multiple_case_total / total_cases * 100) if total_cases > 0 else 0
-            st.metric("% of Total Caseload from Multiple Submitters", f"{multiple_percentage:.2f}%")
-        
-        with col4:
-            st.metric("Total Cases from Multiple Submitters", multiple_case_total)
-        
-        # Detailed breakdown
-        st.subheader("Detailed Multiple Case Analysis")
-        multiple_cases_data = []
-        pilot_counts = df['pilot'].value_counts()
-        
-        for pilot, count in pilot_counts.items():
-            if count > 1:
-                pilot_df = df[df['pilot'] == pilot]
-                total_relief_mins = pilot_df['relief_minutes'].sum() if 'relief_minutes' in pilot_df.columns else 0
-                total_relief_hhmm = minutes_to_hhmm(total_relief_mins)
-                total_relief_cost = relief_dollars(total_relief_mins, relief_rate)
-                subjects = ', '.join(pilot_df['subject'].apply(group_subject_key).unique())
-                statuses = ', '.join(pilot_df['status'].apply(status_canonical).unique())
-                
-                multiple_cases_data.append({
-                    'Pilot Employee #': pilot,
-                    'Number of Cases': count,
-                    'Total Relief (HH:MM)': total_relief_hhmm,
-                    'Total Relief Cost': f"${total_relief_cost:,.2f}",
-                    'Subject Types': subjects,
-                    'Case Statuses': statuses
-                })
-        
-        # Sort by number of cases
-        multiple_cases_data.sort(key=lambda x: x['Number of Cases'], reverse=True)
-        multiple_cases_df = pd.DataFrame(multiple_cases_data)
-        st.dataframe(multiple_cases_df, use_container_width=True)
-    
     # === TOP 20 PILOTS BY RELIEF (OVERALL AND BY STATUS) ===
     with st.expander("Top 20 Pilots by Relief Requested", expanded=True):
         st.subheader("Top Pilots by Relief Amount")
@@ -3400,27 +3345,6 @@ def show_comprehensive_analytics_tab():
                 
                 status_df = pd.DataFrame(status_data)
                 st.dataframe(status_df, use_container_width=True)
-    
-    # === VIOLATION TYPE COUNTS AND PERCENTAGES ===
-    with st.expander("📋 Violation Type Analysis", expanded=True):
-        st.subheader("Raw Violation Types with Counts and Percentages")
-        
-        violation_data = []
-        total_cases = len(df)
-        for violation, count in analytics['violation_counter'].items():
-            percentage = (count / total_cases) * 100 if total_cases > 0 else 0
-            violation_data.append({
-                'Violation Type': violation,
-                'Case Count': count,
-                'Percentage of Total': f"{percentage:.2f}%"
-            })
-        
-        # Sort by count
-        violation_data.sort(key=lambda x: x['Case Count'], reverse=True)
-        violation_df = pd.DataFrame(violation_data)
-        st.dataframe(violation_df, use_container_width=True)
-        
-        st.metric("Total Unique Violation Types", analytics['unique_violation_types'])
     
     # === RECENT CASES AND TOP PILOTS BY CASES ===
     with st.expander("📈 Recent Activity & Top Submitters", expanded=True):
