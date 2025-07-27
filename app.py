@@ -3660,47 +3660,79 @@ def show_executive_dashboard_tab():
                 st.dataframe(pilot_risk_display, use_container_width=True)
         
         with tab3:
-            # Cost by subject analysis
-            subject_costs = []
-            for subject in df['subject'].unique():
-                subject_data = df[df['subject'] == subject]
-                case_count = len(subject_data)
-                total_cost = subject_data['Relief_Dollars'].sum() if 'Relief_Dollars' in subject_data.columns else 0
-                avg_cost = total_cost / case_count if case_count > 0 else 0
+            # Cost by subject analysis - Open cases only
+            st.markdown("**Cost Analysis by Subject (Open Cases Only)**")
+            st.markdown("*Only showing cases with 'Open' status - current cost exposure by subject*")
+            
+            if 'status' in df.columns:
+                # Filter for open cases only
+                open_cases_for_subjects = df[df['status'].str.lower() == 'open']
                 
-                subject_costs.append({
-                    'Subject': subject,
-                    'Cases': case_count,
-                    'Total Cost': total_cost,
-                    'Avg Cost per Case': avg_cost
-                })
-            
-            subject_costs_df = pd.DataFrame(subject_costs)
-            subject_costs_df = subject_costs_df.sort_values('Total Cost', ascending=False)
-            
-            col1, col2 = st.columns(2)
-            with col1:
-                # Format display
-                subject_costs_display = subject_costs_df.copy()
-                subject_costs_display['Total Cost'] = subject_costs_display['Total Cost'].apply(lambda x: f"${x:,.2f}")
-                subject_costs_display['Avg Cost per Case'] = subject_costs_display['Avg Cost per Case'].apply(lambda x: f"${x:,.2f}")
-                
-                st.dataframe(subject_costs_display, use_container_width=True)
-            
-            with col2:
-                # Top subjects by cost
-                top_subjects = subject_costs_df.head(8)
-                if len(top_subjects) > 0 and top_subjects['Total Cost'].sum() > 0:
-                    fig = px.pie(top_subjects, values='Total Cost', names='Subject',
-                               title="Cost Distribution by Subject (Top 8)")
-                    st.plotly_chart(fig, use_container_width=True)
+                if len(open_cases_for_subjects) > 0:
+                    subject_costs = []
+                    for subject in open_cases_for_subjects['subject'].unique():
+                        subject_data = open_cases_for_subjects[open_cases_for_subjects['subject'] == subject]
+                        case_count = len(subject_data)
+                        total_cost = subject_data['Relief_Dollars'].sum() if 'Relief_Dollars' in subject_data.columns else 0
+                        avg_cost = total_cost / case_count if case_count > 0 else 0
+                        
+                        subject_costs.append({
+                            'Subject': subject,
+                            'Open Cases': case_count,
+                            'Total Cost': total_cost,
+                            'Avg Cost per Case': avg_cost
+                        })
+                    
+                    subject_costs_df = pd.DataFrame(subject_costs)
+                    subject_costs_df = subject_costs_df.sort_values('Total Cost', ascending=False)
+                    
+                    col1, col2 = st.columns(2)
+                    
+                    with col1:
+                        # Format display
+                        subject_costs_display = subject_costs_df.copy()
+                        subject_costs_display['Total Cost'] = subject_costs_display['Total Cost'].apply(lambda x: f"${x:,.2f}")
+                        subject_costs_display['Avg Cost per Case'] = subject_costs_display['Avg Cost per Case'].apply(lambda x: f"${x:,.2f}")
+                        
+                        st.dataframe(subject_costs_display, use_container_width=True)
+                    
+                    with col2:
+                        # Top subjects by cost (open cases only)
+                        top_subjects = subject_costs_df.head(8)
+                        if len(top_subjects) > 0 and top_subjects['Total Cost'].sum() > 0:
+                            fig = px.pie(top_subjects, values='Total Cost', names='Subject',
+                                       title="Open Case Cost Distribution by Subject (Top 8)")
+                            st.plotly_chart(fig, use_container_width=True)
+                        else:
+                            st.info("No cost data available for pie chart")
+                    
+                    # Summary metrics for open cases by subject
+                    total_open_cases_subjects = subject_costs_df['Open Cases'].sum()
+                    total_open_cost_subjects = subject_costs_df['Total Cost'].sum()
+                    st.metric("📊 Total Open Cases (All Subjects)", f"{total_open_cases_subjects:,}", f"${total_open_cost_subjects:,.0f} exposure")
+                    
                 else:
-                    st.info("No cost data available for pie chart")
+                    st.warning("No open cases found for subject analysis.")
+            else:
+                st.error("Status column not found in data.")
         
         with tab4:
-            # Cost by subject groups analysis
-            st.markdown("**Cost Analysis by Subject Groups**")
-            st.markdown("*Subjects are grouped using business logic (e.g., Rest, 11.F, Yellow Slip/12.T, Green Slip/23.Q, etc.)*")
+            # Cost by subject groups analysis - Open cases only
+            st.markdown("**Cost Analysis by Subject Groups (Open Cases Only)**")
+            st.markdown("*Open cases grouped by business logic (e.g., Rest, 11.F, Yellow Slip/12.T, Green Slip/23.Q, etc.)*")
+            
+            if 'status' in df.columns:
+                # Filter for open cases only
+                open_cases_for_groups = df[df['status'].str.lower() == 'open']
+                
+                if len(open_cases_for_groups) > 0:
+                    subject_group_costs = []
+                    for subject in open_cases_for_groups['subject'].unique():
+                        subject_data = open_cases_for_groups[open_cases_for_groups['subject'] == subject]
+                        grouped_subject = group_subject_key(subject)  # Use the grouping function
+                        case_count = len(subject_data)
+                        total_cost = subject_data['Relief_Dollars'].sum() if 'Relief_Dollars' in subject_data.columns else 0
+                        avg_cost = total_cost / case_count if case_count > 0 else 0
             
             subject_group_costs = []
             for subject in df['subject'].unique():
@@ -3709,63 +3741,68 @@ def show_executive_dashboard_tab():
                 case_count = len(subject_data)
                 total_cost = subject_data['Relief_Dollars'].sum() if 'Relief_Dollars' in subject_data.columns else 0
                 avg_cost = total_cost / case_count if case_count > 0 else 0
-                
-                subject_group_costs.append({
-                    'Subject Group': grouped_subject,
-                    'Original Subject': subject,
-                    'Cases': case_count,
-                    'Total Cost': total_cost,
-                    'Avg Cost per Case': avg_cost
-                })
-            
-            # Aggregate by subject group
-            subject_groups_df = pd.DataFrame(subject_group_costs)
-            if len(subject_groups_df) > 0:
-                grouped_summary = subject_groups_df.groupby('Subject Group').agg({
-                    'Cases': 'sum',
-                    'Total Cost': 'sum'
-                }).reset_index()
-                grouped_summary['Avg Cost per Case'] = grouped_summary['Total Cost'] / grouped_summary['Cases']
-                grouped_summary = grouped_summary.sort_values('Total Cost', ascending=False)
-                
-                col1, col2 = st.columns(2)
-                
-                with col1:
-                    st.markdown("**Summary by Subject Groups**")
-                    # Format display
-                    grouped_summary_display = grouped_summary.copy()
-                    grouped_summary_display['Total Cost'] = grouped_summary_display['Total Cost'].apply(lambda x: f"${x:,.2f}")
-                    grouped_summary_display['Avg Cost per Case'] = grouped_summary_display['Avg Cost per Case'].apply(lambda x: f"${x:,.2f}")
-                    
-                    st.dataframe(grouped_summary_display, use_container_width=True)
-                
-                with col2:
-                    # Pie chart of grouped subjects
-                    if len(grouped_summary) > 0 and grouped_summary['Total Cost'].sum() > 0:
-                        fig = px.pie(grouped_summary, values='Total Cost', names='Subject Group',
-                                   title="Cost Distribution by Subject Groups")
-                        st.plotly_chart(fig, use_container_width=True)
-                    else:
-                        st.info("No cost data available for pie chart")
-                
-                # Detailed breakdown
-                st.markdown("**Detailed Breakdown by Subject Groups**")
-                
-                # Create expandable sections for each group
-                for group in grouped_summary['Subject Group'].unique():
-                    group_data = subject_groups_df[subject_groups_df['Subject Group'] == group]
-                    group_total_cost = group_data['Total Cost'].sum()
-                    group_total_cases = group_data['Cases'].sum()
-                    
-                    with st.expander(f"📋 {group} - {group_total_cases} cases, ${group_total_cost:,.0f} total cost"):
-                        group_display = group_data[['Original Subject', 'Cases', 'Total Cost', 'Avg Cost per Case']].copy()
-                        group_display = group_display.sort_values('Total Cost', ascending=False)
-                        group_display['Total Cost'] = group_display['Total Cost'].apply(lambda x: f"${x:,.2f}")
-                        group_display['Avg Cost per Case'] = group_display['Avg Cost per Case'].apply(lambda x: f"${x:,.2f}")
                         
-                        st.dataframe(group_display, use_container_width=True)
+                        subject_group_costs.append({
+                            'Subject Group': grouped_subject,
+                            'Original Subject': subject,
+                            'Open Cases': case_count,
+                            'Total Cost': total_cost,
+                            'Avg Cost per Case': avg_cost
+                        })
+                    
+                    # Aggregate by subject group
+                    subject_groups_df = pd.DataFrame(subject_group_costs)
+                    if len(subject_groups_df) > 0:
+                        grouped_summary = subject_groups_df.groupby('Subject Group').agg({
+                            'Open Cases': 'sum',
+                            'Total Cost': 'sum'
+                        }).reset_index()
+                        grouped_summary['Avg Cost per Case'] = grouped_summary['Total Cost'] / grouped_summary['Open Cases']
+                        grouped_summary = grouped_summary.sort_values('Total Cost', ascending=False)
+                        
+                        col1, col2 = st.columns(2)
+                        
+                        with col1:
+                            st.markdown("**Summary by Subject Groups (Open Cases)**")
+                            # Format display
+                            grouped_summary_display = grouped_summary.copy()
+                            grouped_summary_display['Total Cost'] = grouped_summary_display['Total Cost'].apply(lambda x: f"${x:,.2f}")
+                            grouped_summary_display['Avg Cost per Case'] = grouped_summary_display['Avg Cost per Case'].apply(lambda x: f"${x:,.2f}")
+                            
+                            st.dataframe(grouped_summary_display, use_container_width=True)
+                        
+                        with col2:
+                            # Pie chart of grouped subjects (open cases only)
+                            if len(grouped_summary) > 0 and grouped_summary['Total Cost'].sum() > 0:
+                                fig = px.pie(grouped_summary, values='Total Cost', names='Subject Group',
+                                           title="Open Case Cost Distribution by Subject Groups")
+                                st.plotly_chart(fig, use_container_width=True)
+                            else:
+                                st.info("No cost data available for pie chart")
+                        
+                        # Detailed breakdown for open cases
+                        st.markdown("**Detailed Breakdown by Subject Groups (Open Cases)**")
+                        
+                        # Create expandable sections for each group
+                        for group in grouped_summary['Subject Group'].unique():
+                            group_data = subject_groups_df[subject_groups_df['Subject Group'] == group]
+                            group_total_cost = group_data['Total Cost'].sum()
+                            group_total_cases = group_data['Open Cases'].sum()
+                            
+                            with st.expander(f"📋 {group} - {group_total_cases} open cases, ${group_total_cost:,.0f} total cost"):
+                                group_display = group_data[['Original Subject', 'Open Cases', 'Total Cost', 'Avg Cost per Case']].copy()
+                                group_display = group_display.sort_values('Total Cost', ascending=False)
+                                group_display['Total Cost'] = group_display['Total Cost'].apply(lambda x: f"${x:,.2f}")
+                                group_display['Avg Cost per Case'] = group_display['Avg Cost per Case'].apply(lambda x: f"${x:,.2f}")
+                                
+                                st.dataframe(group_display, use_container_width=True)
+                    else:
+                        st.warning("No subject group data available for analysis.")
+                        
+                else:
+                    st.warning("No open cases found for subject group analysis.")
             else:
-                st.warning("No subject data available for grouping analysis.")
+                st.error("Status column not found in data.")
         
         # === BUDGET IMPACT ALERTS ===
         st.subheader("🚨 Budget Impact Alerts")
