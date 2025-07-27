@@ -277,8 +277,12 @@ def calculate_comprehensive_analytics(df, relief_rate=320.47):
     for subject, stats in subject_stats.items():
         approved = stats.get("approved_count", 0)
         denied = stats.get("denied_count", 0)
-        total_decided = approved + denied
-        probability_by_subject[subject] = approved / total_decided if total_decided > 0 else 0
+        impasse = stats.get("impasse_count", 0)  # Include impasse cases
+        
+        # Total decided cases include approved, denied, AND impasse
+        total_decided = approved + denied + impasse
+        
+        # Probability is only based on approved cases (impasse and denied are not paid)
         probability_by_subject[subject] = approved / total_decided if total_decided > 0 else 0
     
     # Calculate average relief minutes per subject
@@ -437,8 +441,13 @@ def calculate_cost_analytics(df, subject_stats, probability_by_subject, avg_reli
     
     # Filter claims by status
     approved_claims = df[df['Status_Canonical'] == 'approved'].copy()
+    denied_claims = df[df['Status_Canonical'] == 'denied'].copy()
+    impasse_claims = df[df['Status_Canonical'] == 'impasse'].copy()
     open_claims = df[df['Status_Canonical'] == 'open'].copy()
     in_review_claims = df[df['Status_Canonical'] == 'in review'].copy()
+    
+    # Decided cases include approved, denied, AND impasse
+    decided_claims = pd.concat([approved_claims, denied_claims, impasse_claims], ignore_index=True)
     
     # Total actual paid (approved) - use Relief_Dollars column
     total_actual_paid_cost = approved_claims['Relief_Dollars'].sum()
@@ -562,7 +571,7 @@ def calculate_cost_analytics(df, subject_stats, probability_by_subject, avg_reli
         avg_monthly_submissions = 10  # Default fallback
     
     # Calculate average probability across all subjects (weighted by volume)
-    total_decided_cases = len(df[df['Status_Canonical'].isin(['approved', 'denied'])])
+    total_decided_cases = len(df[df['Status_Canonical'].isin(['approved', 'denied', 'impasse'])])
     total_approved_cases = len(df[df['Status_Canonical'] == 'approved'])
     overall_approval_rate = total_approved_cases / total_decided_cases if total_decided_cases > 0 else 0.3
     
@@ -786,10 +795,13 @@ def monthly_trends_analysis(df):
         # Monthly cost trends
         monthly_costs = df_recent.groupby('month_year')['relief_dollars'].sum()
         
-        # Monthly approval rates
+        # Monthly approval rates (approved vs total decided cases including impasse)
         approved_cases = df_recent[df_recent['status'].str.contains('approved|paid', case=False, na=False)]
+        decided_cases = df_recent[df_recent['status'].str.contains('approved|paid|denied|rejected|impasse', case=False, na=False)]
+        
         monthly_approvals = approved_cases.groupby('month_year').size()
-        monthly_approval_rates = (monthly_approvals / monthly_submissions * 100).fillna(0)
+        monthly_decided = decided_cases.groupby('month_year').size()
+        monthly_approval_rates = (monthly_approvals / monthly_decided * 100).fillna(0)
         
         # Fill in missing months with 0 values and format as readable month names
         submissions_dict = {}
@@ -824,8 +836,8 @@ def generate_demo_data():
     subjects = ['Rest', '11.F', 'Yellow Slip / 12.T', 'Green Slip / 23.Q', 'Short Call', 'Long Call', '23.O', 'Deadhead / 8.D', 'Payback Day / 23.S.11', 'White Slip / 23.P']
     
     # Realistic status distribution - ensure we have decided cases for probability calculations
-    statuses = ['approved', 'denied', 'in review', 'open', 'pending']
-    status_weights = [0.35, 0.25, 0.15, 0.15, 0.10]  # 35% approved, 25% denied, etc.
+    statuses = ['approved', 'denied', 'impasse', 'in review', 'open', 'pending']
+    status_weights = [0.30, 0.20, 0.10, 0.15, 0.15, 0.10]  # 30% approved, 20% denied, 10% impasse, etc.
     
     data = []
     for i in range(n_claims):
@@ -857,12 +869,15 @@ def generate_demo_data():
         subject = np.random.choice(subjects)
         
         # Adjust approval probability based on subject type (realistic patterns)
-        if status in ['approved', 'denied'] and subject in ['Rest', 'Short Call', 'Yellow Slip / 12.T']:
+        if status in ['approved', 'denied', 'impasse'] and subject in ['Rest', 'Short Call', 'Yellow Slip / 12.T']:
             # These subjects have higher approval rates in real data
-            if np.random.random() < 0.7:  # 70% chance to be approved
+            random_val = np.random.random()
+            if random_val < 0.6:  # 60% chance to be approved
                 status = 'approved'
-            else:
+            elif random_val < 0.85:  # 25% chance to be denied
                 status = 'denied'
+            else:  # 15% chance to be impasse
+                status = 'impasse'
         
         data.append({
             'case_number': f'STS-{2024}-{i+1:04d}',
@@ -1346,7 +1361,8 @@ def show_analytics_tab():
                 # Add probability and approval metrics
                 approved = stats.get('approved_count', 0)
                 denied = stats.get('denied_count', 0)
-                total_decided = approved + denied
+                impasse = stats.get('impasse_count', 0)
+                total_decided = approved + denied + impasse  # Include impasse in decided cases
                 approval_rate = (approved / total_decided * 100) if total_decided > 0 else 0
                 row['Approval Rate (%)'] = round(approval_rate, 1)
                 
@@ -1523,20 +1539,23 @@ def show_analytics_tab():
                     pilot_data_temp['status_canonical'] = pilot_data_temp[status_col].apply(
                         lambda x: 'approved' if str(x).lower() in ['approved', 'paid'] 
                         else 'denied' if str(x).lower() in ['denied', 'rejected'] 
+                        else 'impasse' if str(x).lower() in ['impasse']
                         else 'open'
                     )
                     
                     approved_count = len(pilot_data_temp[pilot_data_temp['status_canonical'] == 'approved'])
                     denied_count = len(pilot_data_temp[pilot_data_temp['status_canonical'] == 'denied'])
+                    impasse_count = len(pilot_data_temp[pilot_data_temp['status_canonical'] == 'impasse'])
                     open_count = len(pilot_data_temp[pilot_data_temp['status_canonical'] == 'open'])
                     
-                    # Calculate approval rate
-                    total_decided = approved_count + denied_count
+                    # Calculate approval rate (include impasse in decided cases)
+                    total_decided = approved_count + denied_count + impasse_count
                     approval_rate = (approved_count / total_decided * 100) if total_decided > 0 else 0
                 else:
                     # Fallback if status column doesn't exist
                     approved_count = 0
                     denied_count = 0
+                    impasse_count = 0
                     open_count = case_count
                     approval_rate = 0
                 
@@ -1547,6 +1566,7 @@ def show_analytics_tab():
                     'Avg Relief ($)': avg_relief,
                     'Approved Cases': approved_count,
                     'Denied Cases': denied_count,
+                    'Impasse Cases': impasse_count,
                     'Open Cases': open_count,
                     'Approval Rate (%)': round(approval_rate, 1)
                 })
