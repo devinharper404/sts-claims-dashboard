@@ -2257,7 +2257,7 @@ def main():
                     
                     # Validate columns
                     required_cols = ['case_number', 'pilot', 'subject', 'status']
-                    optional_cols = ['relief_minutes', 'relief_dollars', 'submission_date']
+                    optional_cols = ['relief_minutes', 'relief_dollars', 'relief_requested', 'submission_date']
                     
                     missing_required = [col for col in required_cols if col not in df_upload.columns]
                     available_optional = [col for col in optional_cols if col in df_upload.columns]
@@ -2274,8 +2274,12 @@ def main():
                         with col2:
                             st.metric("Available Optional Columns", len(available_optional))
                         
-                        # Handle relief data
-                        if 'relief_minutes' not in df_upload.columns and 'relief_dollars' not in df_upload.columns:
+                        # Handle relief data - check for relief_requested first
+                        if 'relief_requested' in df_upload.columns and 'relief_minutes' not in df_upload.columns:
+                            # Convert relief_requested (HH:MM format) to relief_minutes
+                            df_upload['relief_minutes'] = df_upload['relief_requested'].apply(hhmm_to_minutes)
+                            st.info("✅ Converted relief_requested (HH:MM) to relief_minutes")
+                        elif 'relief_minutes' not in df_upload.columns and 'relief_dollars' not in df_upload.columns:
                             st.warning("⚠️ No relief data found. Adding default relief values.")
                             df_upload['relief_minutes'] = 60  # Default 1 hour
                         
