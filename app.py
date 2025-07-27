@@ -3350,6 +3350,9 @@ python sts_totalpackage_v2_Version5_Version2.py
     
     with tab6:
         show_executive_dashboard_tab()
+    
+    with tab7:
+        show_30_day_lookback_tab()
 
 def show_executive_dashboard_tab():
     """Executive Cost Control Dashboard for business leaders and analysts"""
@@ -4061,9 +4064,6 @@ def show_comprehensive_analytics_tab():
             actual_df = pd.DataFrame(actual_data)
             st.dataframe(actual_df, use_container_width=True)
             st.metric("Total Actual Paid", f"${total_actual:,.2f}")
-
-    with tab7:
-        show_30_day_lookback_tab()
 
 def show_30_day_lookback_tab():
     """30-Day Lookback - Executive metrics for immediate decision making"""
