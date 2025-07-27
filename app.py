@@ -2224,79 +2224,35 @@ def show_financial_tab():
                 with tab2:
                     st.write("**Forecasted costs by individual violation codes**")
                     
-                    # Calculate forecasting using raw subjects (not grouped)
-                    df_for_raw = get_data()
-                    if not df_for_raw.empty:
-                        # Add canonical status
-                        df_for_raw['Status_Canonical'] = df_for_raw['status'].apply(status_canonical)
+                    # Use the exact code from the standalone "Forecasted Cost by Violation Type" section
+                    if cost_data.get('forecasted_cost_by_violation'):
+                        violation_forecast = cost_data['forecasted_cost_by_violation']
+                        positive_forecasts = {k: v for k, v in violation_forecast.items() if v > 0}
                         
-                        # Ensure relief_dollars column exists
-                        relief_rate = st.session_state.get('relief_rate', 320.47)
-                        if 'relief_minutes' in df_for_raw.columns and 'relief_dollars' not in df_for_raw.columns:
-                            df_for_raw['Relief_Dollars'] = df_for_raw['relief_minutes'].apply(lambda x: relief_dollars(x, relief_rate))
-                        elif 'relief_dollars' in df_for_raw.columns:
-                            df_for_raw['Relief_Dollars'] = df_for_raw['relief_dollars']
-                        else:
-                            df_for_raw['Relief_Dollars'] = 0
-                        
-                        # Calculate raw subject forecasting
-                        raw_forecasted_cost = {}
-                        
-                        # Calculate probabilities for raw subjects
-                        raw_probability_by_subject = {}
-                        raw_avg_relief_by_subject = {}
-                        
-                        for subject in df_for_raw['subject'].unique():
-                            if pd.isna(subject):
-                                continue
-                                
-                            subject_data = df_for_raw[df_for_raw['subject'] == subject]
+                        if positive_forecasts:
+                            violation_df = pd.DataFrame(list(positive_forecasts.items()), 
+                                                      columns=['Violation', 'Forecasted Cost'])
+                            violation_df = violation_df.sort_values('Forecasted Cost', ascending=False)
                             
-                            # Calculate approval probability
-                            approved = len(subject_data[subject_data['Status_Canonical'] == 'Approved'])
-                            denied = len(subject_data[subject_data['Status_Canonical'] == 'Denied'])
-                            impasse = len(subject_data[subject_data['Status_Canonical'] == 'Impasse'])
-                            total_decided = approved + denied + impasse
+                            # Format for display
+                            violation_df_display = violation_df.copy()
+                            violation_df_display['Forecasted Cost'] = violation_df_display['Forecasted Cost'].apply(lambda x: f"${x:,.2f}")
                             
-                            raw_probability_by_subject[subject] = approved / total_decided if total_decided > 0 else 0
-                            
-                            # Calculate average relief in dollars
-                            raw_avg_relief_by_subject[subject] = subject_data['Relief_Dollars'].mean() if len(subject_data) > 0 else 0
-                            
-                            # Calculate unresolved count and forecasted cost
-                            open_count = len(subject_data[subject_data['Status_Canonical'] == 'Open'])
-                            in_review_count = len(subject_data[subject_data['Status_Canonical'] == 'In Review'])
-                            unresolved = open_count + in_review_count
-                            
-                            prob = raw_probability_by_subject[subject]
-                            avg_relief = raw_avg_relief_by_subject[subject]
-                            
-                            raw_forecasted_cost[subject] = prob * unresolved * avg_relief
-                        
-                        # Filter and display results
-                        if raw_forecasted_cost and any(v > 0 for v in raw_forecasted_cost.values()):
-                            raw_forecast_df = pd.DataFrame(list(raw_forecasted_cost.items()), 
-                                                         columns=['Subject', 'Forecasted Cost'])
-                            raw_forecast_df = raw_forecast_df[raw_forecast_df['Forecasted Cost'] > 0].sort_values('Forecasted Cost', ascending=False)
-                            
-                            # Format Forecasted Cost column for display
-                            raw_forecast_display_df = raw_forecast_df.copy()
-                            raw_forecast_display_df['Forecasted Cost'] = raw_forecast_display_df['Forecasted Cost'].apply(lambda x: f"${x:,.2f}" if pd.notnull(x) else "$0.00")
-                            
-                            col1, col2 = st.columns([1, 1])
+                            col1, col2 = st.columns([2, 1])
                             with col1:
-                                st.dataframe(raw_forecast_display_df, use_container_width=True)
+                                st.dataframe(violation_df_display, use_container_width=True, height=300)
                             with col2:
-                                if len(raw_forecast_df) > 0:
-                                    # Use original numeric values for chart
-                                    fig = px.bar(raw_forecast_df.head(8), x='Forecasted Cost', y='Subject',
-                                               title="Top Forecasted Costs by Raw Violation", orientation='h')
-                                    fig.update_xaxes(tickformat="$,.0f")
-                                    st.plotly_chart(fig, use_container_width=True)
+                                # Use original numeric values for chart
+                                fig = px.bar(violation_df.head(8), x='Forecasted Cost', y='Violation',
+                                           title="Top Violations by Forecast", orientation='h')
+                                fig.update_layout(height=300)
+                                # Format x-axis to show currency
+                                fig.update_xaxes(tickformat="$,.0f")
+                                st.plotly_chart(fig, use_container_width=True)
                         else:
-                            st.info("No positive raw subject forecasted costs to display")
+                            st.info("No positive violation forecasts to display")
                     else:
-                        st.info("No data available for raw subject forecasting")
+                        st.info("No violation forecast data available")
             else:
                 st.info("No positive forecasted costs to display")
         
@@ -2328,33 +2284,6 @@ def show_financial_tab():
                         st.plotly_chart(fig, use_container_width=True)
                 else:
                     st.info("No positive pilot forecasts to display")
-        
-        # Forecasted Cost by Violation Type
-        if cost_data.get('forecasted_cost_by_violation'):
-            st.subheader("⚖️ Forecasted Cost by Violation Type")
-            violation_forecast = cost_data['forecasted_cost_by_violation']
-            positive_forecasts = {k: v for k, v in violation_forecast.items() if v > 0}
-            
-            if positive_forecasts:
-                violation_df = pd.DataFrame(list(positive_forecasts.items()), 
-                                          columns=['Violation', 'Forecasted Cost'])
-                violation_df = violation_df.sort_values('Forecasted Cost', ascending=False)
-                
-                # Format for display
-                violation_df_display = violation_df.copy()
-                violation_df_display['Forecasted Cost'] = violation_df_display['Forecasted Cost'].apply(lambda x: f"${x:,.2f}")
-                
-                col1, col2 = st.columns([2, 1])
-                with col1:
-                    st.dataframe(violation_df_display, use_container_width=True, height=300)
-                with col2:
-                    # Use original numeric values for chart
-                    fig = px.bar(violation_df.head(8), x='Forecasted Cost', y='Violation',
-                               title="Top Violations by Forecast", orientation='h')
-                    fig.update_layout(height=300)
-                    # Format x-axis to show currency
-                    fig.update_xaxes(tickformat="$,.0f")
-                    st.plotly_chart(fig, use_container_width=True)
         
         # Forecasted Cost by Month
         if cost_data.get('forecasted_cost_by_month'):
