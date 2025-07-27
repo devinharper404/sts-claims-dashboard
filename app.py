@@ -1186,25 +1186,43 @@ def show_analytics_tab():
                 }
             )
             
-            # Chart for top 10 (use original numeric values)
+            # Chart for top 10 - Subject Category Analysis
             top_10_chart_df = top_claims_df.head(10).copy()
-            top_10_chart_df['rank'] = range(1, len(top_10_chart_df) + 1)
-            top_10_chart_df['chart_label'] = top_10_chart_df.apply(lambda x: f"#{x['rank']}: {x['pilot'][:10]}", axis=1)
             
-            # Calculate average for comparison
-            avg_relief = top_claims_df['Relief_Dollars'].mean()
+            # Add subject grouping for better insights
+            top_10_chart_df['Subject_Grouped'] = top_10_chart_df['subject'].apply(group_subject_key)
             
-            fig = px.bar(top_10_chart_df, x='chart_label', y='Relief_Dollars',
-                        title="Top 10 Claims by Relief Value vs Average",
-                        hover_data=['pilot', 'subject', 'case_number'])
+            # Create a more meaningful chart showing subject distribution of high-value claims
+            subject_value_analysis = top_10_chart_df.groupby('Subject_Grouped').agg({
+                'Relief_Dollars': ['sum', 'count', 'mean']
+            }).round(2)
             
-            # Add average line
-            fig.add_hline(y=avg_relief, line_dash="dash", line_color="red",
-                         annotation_text=f"Average: ${avg_relief:,.0f}")
+            subject_value_analysis.columns = ['Total_Value', 'Count', 'Avg_Value']
+            subject_value_analysis = subject_value_analysis.reset_index()
+            subject_value_analysis = subject_value_analysis.sort_values('Total_Value', ascending=True)
             
-            fig.update_xaxes(tickangle=45, title="Rank & Pilot")
-            fig.update_yaxes(tickformat="$,.0f", title="Relief Value ($)")
+            fig = px.bar(subject_value_analysis, 
+                        x='Total_Value', y='Subject_Grouped',
+                        title="High-Value Claims: Total Relief by Subject Category (Top 10 Claims)",
+                        orientation='h',
+                        hover_data=['Count', 'Avg_Value'],
+                        labels={
+                            'Total_Value': 'Total Relief Value ($)',
+                            'Subject_Grouped': 'Subject Category',
+                            'Count': 'Number of Claims',
+                            'Avg_Value': 'Average Value ($)'
+                        })
+            
+            fig.update_xaxes(tickformat="$,.0f")
+            fig.update_layout(height=400)
             st.plotly_chart(fig, use_container_width=True)
+            
+            # Add insight text
+            if not subject_value_analysis.empty:
+                top_subject = subject_value_analysis.iloc[-1]
+                st.info(f"💡 **Insight**: {top_subject['Subject_Grouped']} accounts for ${top_subject['Total_Value']:,.0f} "
+                       f"across {int(top_subject['Count'])} of the top 10 highest-value claims "
+                       f"(avg: ${top_subject['Avg_Value']:,.0f} per claim).")
         
         # ===== NEW: TOP 20 PILOTS BY RELIEF AMOUNT (FROM ORIGINAL SCRIPT) =====
         st.subheader("🥇 Top 20 Pilots by Relief Amount - Overall")
