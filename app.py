@@ -760,7 +760,7 @@ def generate_demo_data():
         
         # Generate realistic financial data
         relief_amount = np.random.lognormal(6, 1.2) * 100  # Log-normal for realistic money distribution
-        relief_rate = 320.47  # Use default rate for demo data
+        relief_rate = st.session_state.get('relief_rate', 320.47)  # Use current relief rate from session state
         relief_minutes = (relief_amount / relief_rate) * 60  # Convert back to minutes
         
         # Weighted status selection for realistic distributions
