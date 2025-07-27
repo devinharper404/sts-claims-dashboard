@@ -549,10 +549,62 @@ def calculate_cost_analytics(df, subject_stats, probability_by_subject, avg_reli
         elif row['Status_Canonical'] == 'in review':
             month_in_review[month] += 1
     
+    # ===== FUTURE MONTHLY FORECASTING LOGIC =====
+    # Calculate actual future forecasting based on open/in-review cases and probability patterns
+    
+    # Get historical monthly submission rates for trend analysis
+    try:
+        df['submission_date_dt'] = pd.to_datetime(df['submission_date'])
+        last_6_months = df[df['submission_date_dt'] >= (datetime.now() - timedelta(days=180))]
+        monthly_submissions = last_6_months.groupby(last_6_months['submission_date_dt'].dt.to_period('M')).size()
+        avg_monthly_submissions = monthly_submissions.mean() if len(monthly_submissions) > 0 else 10
+    except:
+        avg_monthly_submissions = 10  # Default fallback
+    
+    # Calculate average probability across all subjects (weighted by volume)
+    total_decided_cases = len(df[df['Status_Canonical'].isin(['approved', 'denied'])])
+    total_approved_cases = len(df[df['Status_Canonical'] == 'approved'])
+    overall_approval_rate = total_approved_cases / total_decided_cases if total_decided_cases > 0 else 0.3
+    
+    # Calculate average relief amount from recent approved cases
+    recent_approved = df[df['Status_Canonical'] == 'approved']
+    avg_relief_amount = recent_approved['Relief_Dollars'].mean() if len(recent_approved) > 0 else relief_rate * 2  # Default 2 hours
+    
+    # Project future costs for next 12 months
     forecasted_cost_by_month = {}
-    for month in month_prob:
-        unresolved = month_open[month] + month_in_review[month]
-        forecasted_cost_by_month[month] = month_prob[month] * unresolved * month_avg_relief[month]
+    current_date = datetime.now()
+    
+    # Current open/in-review cases that may be decided
+    open_and_review_cases = len(df[df['Status_Canonical'].isin(['open', 'in review'])])
+    
+    for i in range(12):  # Next 12 months
+        future_date = current_date + timedelta(days=30 * i)  # Approximate monthly increments
+        month_key = future_date.strftime('%b %Y')  # Format as "Aug 2025"
+        
+        # Forecast methodology:
+        # 1. Existing open/in-review cases that may be decided this month (decreasing over time)
+        # 2. New cases submitted this month that get approved
+        # 3. Apply probability of approval and average relief amounts
+        
+        # Existing cases resolution (exponential decay - more cases resolved in earlier months)
+        existing_cases_factor = max(0.1, 0.8 ** i)  # 80% reduction each month, minimum 10%
+        existing_cases_this_month = open_and_review_cases * existing_cases_factor * (1/12)  # Spread over 12 months
+        
+        # New cases submitted and potentially approved this month
+        new_cases_this_month = avg_monthly_submissions
+        
+        # Total potential approvals this month
+        total_potential_approvals = (existing_cases_this_month + new_cases_this_month) * overall_approval_rate
+        
+        # Calculate forecasted cost
+        forecasted_cost_by_month[month_key] = total_potential_approvals * avg_relief_amount
+    
+    # Also add current month processing of existing backlog
+    current_month = current_date.strftime('%b %Y')
+    if current_month in forecasted_cost_by_month:
+        # Add immediate processing of current backlog
+        immediate_backlog_cost = open_and_review_cases * 0.15 * overall_approval_rate * avg_relief_amount  # 15% of backlog processed immediately
+        forecasted_cost_by_month[current_month] += immediate_backlog_cost
     
     # ===== AGING FORECAST =====
     now = datetime.now()
@@ -1794,14 +1846,22 @@ def show_financial_tab():
         
         # Forecasted Cost by Month
         if cost_data.get('forecasted_cost_by_month'):
-            st.subheader("📅 Forecasted Cost by Month")
+            st.subheader("📅 Forecasted Cost by Month (Next 12 Months)")
+            st.info("📊 **Forecasting Method:** Based on current open/in-review cases, historical submission rates, approval probabilities, and average relief amounts.")
+            
             monthly_forecast = cost_data['forecasted_cost_by_month']
             positive_monthly = {k: v for k, v in monthly_forecast.items() if v > 0}
             
             if positive_monthly:
                 monthly_df = pd.DataFrame(list(positive_monthly.items()), 
                                         columns=['Month', 'Forecasted Cost'])
-                monthly_df = monthly_df.sort_values('Month')
+                # Sort by date order instead of alphabetical
+                try:
+                    monthly_df['Month_Date'] = pd.to_datetime(monthly_df['Month'], format='%b %Y')
+                    monthly_df = monthly_df.sort_values('Month_Date')
+                    monthly_df = monthly_df.drop('Month_Date', axis=1)
+                except:
+                    monthly_df = monthly_df.sort_values('Month')  # Fallback to alphabetical
                 
                 # Format the Forecasted Cost column for display
                 monthly_df_display = monthly_df.copy()
@@ -1813,11 +1873,18 @@ def show_financial_tab():
                 with col2:
                     # Use original numeric values for the chart
                     fig = px.line(monthly_df, x='Month', y='Forecasted Cost',
-                                title="Monthly Forecast Trend")
+                                title="12-Month Cost Forecast Projection",
+                                labels={'Month': 'Future Month', 'Forecasted Cost': 'Projected Cost ($)'})
                     fig.update_xaxes(tickangle=45)
                     # Format y-axis to show currency
                     fig.update_yaxes(tickformat="$,.0f")
                     st.plotly_chart(fig, use_container_width=True)
+                
+                # Add forecasting insights
+                total_forecast = sum(positive_monthly.values())
+                avg_monthly_forecast = total_forecast / len(positive_monthly) if positive_monthly else 0
+                st.metric("Total 12-Month Forecast", f"${total_forecast:,.2f}")
+                st.metric("Average Monthly Forecast", f"${avg_monthly_forecast:,.2f}")
         
         # Aging Forecast
         if cost_data.get('aging_forecast'):
