@@ -1173,18 +1173,37 @@ def show_analytics_tab():
         st.subheader("🏆 Top 20 Highest Value Claims")
         if analytics['top_20_claims']:
             top_claims_df = pd.DataFrame(analytics['top_20_claims'])
-            # Format Relief_Dollars column for display
-            top_claims_display_df = top_claims_df.copy()
-            if 'Relief_Dollars' in top_claims_display_df.columns:
-                top_claims_display_df['Relief_Dollars'] = top_claims_display_df['Relief_Dollars'].apply(lambda x: f"${x:,.2f}" if pd.notnull(x) else "$0.00")
-            st.dataframe(top_claims_display_df, use_container_width=True)
+            
+            # Display with proper column formatting for sorting
+            st.dataframe(
+                top_claims_df, 
+                use_container_width=True,
+                column_config={
+                    'Relief_Dollars': st.column_config.NumberColumn(
+                        'Relief_Dollars',
+                        format="$%.2f"
+                    )
+                }
+            )
             
             # Chart for top 10 (use original numeric values)
-            fig = px.bar(top_claims_df.head(10), x='case_number', y='Relief_Dollars',
-                        title="Top 10 Claims by Relief Value", hover_data=['pilot', 'subject'])
-            fig.update_xaxes(tickangle=45)
-            # Format y-axis to show currency
-            fig.update_yaxes(tickformat="$,.0f")
+            top_10_chart_df = top_claims_df.head(10).copy()
+            top_10_chart_df['rank'] = range(1, len(top_10_chart_df) + 1)
+            top_10_chart_df['chart_label'] = top_10_chart_df.apply(lambda x: f"#{x['rank']}: {x['pilot'][:10]}", axis=1)
+            
+            # Calculate average for comparison
+            avg_relief = top_claims_df['Relief_Dollars'].mean()
+            
+            fig = px.bar(top_10_chart_df, x='chart_label', y='Relief_Dollars',
+                        title="Top 10 Claims by Relief Value vs Average",
+                        hover_data=['pilot', 'subject', 'case_number'])
+            
+            # Add average line
+            fig.add_hline(y=avg_relief, line_dash="dash", line_color="red",
+                         annotation_text=f"Average: ${avg_relief:,.0f}")
+            
+            fig.update_xaxes(tickangle=45, title="Rank & Pilot")
+            fig.update_yaxes(tickformat="$,.0f", title="Relief Value ($)")
             st.plotly_chart(fig, use_container_width=True)
         
         # ===== NEW: TOP 20 PILOTS BY RELIEF AMOUNT (FROM ORIGINAL SCRIPT) =====
@@ -1200,14 +1219,32 @@ def show_analytics_tab():
             
             col1, col2 = st.columns([2, 1])
             with col1:
-                st.dataframe(top_pilots_relief_display_df, use_container_width=True)
+                # Display with proper column formatting for sorting
+                st.dataframe(
+                    top_pilots_relief_df, 
+                    use_container_width=True,
+                    column_config={
+                        'Total Relief ($)': st.column_config.NumberColumn(
+                            'Total Relief ($)',
+                            format="$%.2f"
+                        )
+                    }
+                )
             with col2:
-                # Use original numeric values for chart
-                fig = px.bar(top_pilots_relief_df.head(10), x='Total Relief ($)', y='Pilot',
-                           title="Top 10 Pilots by Relief Amount", orientation='h')
+                # Use original numeric values for chart and show just employee numbers
+                chart_df = top_pilots_relief_df.head(10).copy()
+                # Extract just the employee number from pilot name (assuming format like "12345 - Name")
+                chart_df['Employee_Number'] = chart_df['Pilot'].apply(
+                    lambda x: x.split(' - ')[0] if ' - ' in str(x) else str(x)[:10]
+                )
+                
+                fig = px.bar(chart_df, x='Total Relief ($)', y='Employee_Number',
+                           title="Top 10 Pilots by Relief Amount", orientation='h',
+                           hover_data=['Pilot'])
                 fig.update_layout(height=400)
                 # Format x-axis to show currency
                 fig.update_xaxes(tickformat="$,.0f")
+                fig.update_yaxes(title="Employee Number")
                 st.plotly_chart(fig, use_container_width=True)
         
         # Top 20 Pilots by Relief Amount per Status
@@ -1673,8 +1710,21 @@ def show_analytics_tab():
             multi_detail_df = pd.DataFrame(multi_detail)
             multi_detail_df = multi_detail_df.sort_values('Number of Cases', ascending=False)
             
-            # Display detailed table
-            st.dataframe(multi_detail_df, use_container_width=True)
+            # Display detailed table with proper column formatting for sorting
+            st.dataframe(
+                multi_detail_df, 
+                use_container_width=True,
+                column_config={
+                    'Total Relief ($)': st.column_config.NumberColumn(
+                        'Total Relief ($)',
+                        format="$%.2f"
+                    ),
+                    'Average Relief ($)': st.column_config.NumberColumn(
+                        'Average Relief ($)',
+                        format="$%.2f"
+                    )
+                }
+            )
             
             # Analysis charts
             col1, col2 = st.columns(2)
