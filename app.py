@@ -1217,12 +1217,34 @@ def show_analytics_tab():
             fig.update_layout(height=400)
             st.plotly_chart(fig, use_container_width=True)
             
-            # Add insight text
+            # Add insight text with better formatting
             if not subject_value_analysis.empty:
                 top_subject = subject_value_analysis.iloc[-1]
-                st.info(f"💡 **Insight**: {top_subject['Subject_Grouped']} accounts for ${top_subject['Total_Value']:,.0f} "
-                       f"across {int(top_subject['Count'])} of the top 10 highest-value claims "
-                       f"(avg: ${top_subject['Avg_Value']:,.0f} per claim).")
+                st.markdown("---")
+                st.markdown("### 💡 Key Insight")
+                
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.metric(
+                        label="Top Subject Category",
+                        value=top_subject['Subject_Grouped']
+                    )
+                with col2:
+                    st.metric(
+                        label="Total Value in Top 10",
+                        value=f"${top_subject['Total_Value']:,.0f}"
+                    )
+                with col3:
+                    st.metric(
+                        label="Avg Value per Claim",
+                        value=f"${top_subject['Avg_Value']:,.0f}"
+                    )
+                
+                st.markdown(f"""
+                **Analysis**: *{top_subject['Subject_Grouped']}* violations represent the highest total value 
+                among the top 10 most expensive claims, appearing in **{int(top_subject['Count'])} claims** 
+                with an average value of **${top_subject['Avg_Value']:,.0f}** per claim.
+                """)
         
         # ===== NEW: TOP 20 PILOTS BY RELIEF AMOUNT (FROM ORIGINAL SCRIPT) =====
         st.subheader("🥇 Top 20 Pilots by Relief Amount - Overall")
