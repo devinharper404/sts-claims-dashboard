@@ -1580,13 +1580,22 @@ def show_financial_tab():
         if cost_data.get('top_pilots_by_cost'):
             st.subheader("🏆 Top Pilots by Cost")
             pilots_df = pd.DataFrame(cost_data['top_pilots_by_cost'])
-            st.dataframe(pilots_df.head(20), use_container_width=True)
             
-            # Chart
+            # Format the total_cost column for display
+            if 'total_cost' in pilots_df.columns:
+                pilots_df_display = pilots_df.copy()
+                pilots_df_display['total_cost'] = pilots_df_display['total_cost'].apply(lambda x: f"${x:,.2f}" if pd.notnull(x) else "$0.00")
+                st.dataframe(pilots_df_display.head(20), use_container_width=True)
+            else:
+                st.dataframe(pilots_df.head(20), use_container_width=True)
+            
+            # Chart (use original numeric values)
             if len(pilots_df) >= 10:
                 fig = px.bar(pilots_df.head(10), x='pilot', y='total_cost',
                             title="Top 10 Pilots by Total Cost")
                 fig.update_xaxes(tickangle=45)
+                # Format y-axis to show currency
+                fig.update_yaxes(tickformat="$,.0f")
                 st.plotly_chart(fig, use_container_width=True)
         
         # Forecasted cost by subject
@@ -1662,13 +1671,20 @@ def show_financial_tab():
                                         columns=['Month', 'Forecasted Cost'])
                 monthly_df = monthly_df.sort_values('Month')
                 
+                # Format the Forecasted Cost column for display
+                monthly_df_display = monthly_df.copy()
+                monthly_df_display['Forecasted Cost'] = monthly_df_display['Forecasted Cost'].apply(lambda x: f"${x:,.2f}" if pd.notnull(x) else "$0.00")
+                
                 col1, col2 = st.columns([1, 1])
                 with col1:
-                    st.dataframe(monthly_df, use_container_width=True)
+                    st.dataframe(monthly_df_display, use_container_width=True)
                 with col2:
+                    # Use original numeric values for the chart
                     fig = px.line(monthly_df, x='Month', y='Forecasted Cost',
                                 title="Monthly Forecast Trend")
                     fig.update_xaxes(tickangle=45)
+                    # Format y-axis to show currency
+                    fig.update_yaxes(tickformat="$,.0f")
                     st.plotly_chart(fig, use_container_width=True)
         
         # Aging Forecast
@@ -1681,12 +1697,19 @@ def show_financial_tab():
             aging_df = aging_df[aging_df['Forecasted Cost'] > 0]
             
             if len(aging_df) > 0:
+                # Format the Forecasted Cost column for display
+                aging_df_display = aging_df.copy()
+                aging_df_display['Forecasted Cost'] = aging_df_display['Forecasted Cost'].apply(lambda x: f"${x:,.2f}" if pd.notnull(x) else "$0.00")
+                
                 col1, col2 = st.columns([1, 1])
                 with col1:
-                    st.dataframe(aging_df, use_container_width=True)
+                    st.dataframe(aging_df_display, use_container_width=True)
                 with col2:
+                    # Use original numeric values for the chart
                     fig = px.bar(aging_df, x='Age Bucket (Days)', y='Forecasted Cost',
                                title="Forecasted Cost by Case Age")
+                    # Format y-axis to show currency
+                    fig.update_yaxes(tickformat="$,.0f")
                     st.plotly_chart(fig, use_container_width=True)
         
         # Actual vs Forecasted Cost Comparison
@@ -1712,6 +1735,10 @@ def show_financial_tab():
             outliers = cost_data['outlier_cases']
             if outliers:
                 outlier_df = pd.DataFrame(outliers)
+                # Format Relief_Dollars column for proper currency display
+                if 'Relief_Dollars' in outlier_df.columns:
+                    outlier_df['Relief_Dollars'] = outlier_df['Relief_Dollars'].apply(lambda x: f"${x:,.2f}" if pd.notnull(x) else "$0.00")
+                
                 # Select relevant columns for display
                 display_cols = ['case_number', 'pilot', 'subject', 'Relief_Dollars', 'Status_Canonical']
                 available_cols = [col for col in display_cols if col in outlier_df.columns]
@@ -1719,10 +1746,13 @@ def show_financial_tab():
                     st.dataframe(outlier_df[available_cols], use_container_width=True)
                 else:
                     st.dataframe(outlier_df, use_container_width=True)
+                
                 forecast_df = pd.DataFrame(list(forecast_data.items()), 
                                          columns=['Subject', 'Forecasted Cost'])
                 forecast_df = forecast_df[forecast_df['Forecasted Cost'] > 0]
-                forecast_df = forecast_df.sort_values('Forecasted Cost', ascending=False)
+                # Format Forecasted Cost column for proper currency display
+                forecast_df['Forecasted Cost'] = forecast_df['Forecasted Cost'].apply(lambda x: f"${x:,.2f}" if pd.notnull(x) else "$0.00")
+                forecast_df = forecast_df.sort_values('Forecasted Cost', ascending=False, key=lambda x: x.str.replace('$', '').str.replace(',', '').astype(float))
                 
                 st.dataframe(forecast_df, use_container_width=True)
                 
