@@ -3379,6 +3379,33 @@ def show_executive_dashboard_tab():
         analytics = calculate_comprehensive_analytics(df, relief_rate)
         cost_data = analytics['cost_analytics']
         
+        # Calculate key metrics used throughout the dashboard
+        total_actual = cost_data.get('total_actual_cost', 0)
+        total_forecasted = cost_data.get('total_forecasted_cost', 0)
+        avg_cost_per_case = cost_data.get('avg_paid_per_case', 0)
+        
+        # Calculate pending cases count
+        total_pending = 0
+        if 'status' in df.columns:
+            pending_statuses = ['open', 'in review']
+            total_pending = len(df[df['status'].str.lower().isin(pending_statuses)])
+        
+        # Calculate approval metrics
+        total_cases = len(df)
+        approved_cases = len(df[df['status'].str.lower() == 'approved']) if 'status' in df.columns else 0
+        approval_rate = (approved_cases / total_cases * 100) if total_cases > 0 else 0
+        
+        # Calculate other case counts
+        open_cases = len(df[df['status'].str.lower() == 'open']) if 'status' in df.columns else 0
+        denied_cases = len(df[df['status'].str.lower() == 'denied']) if 'status' in df.columns else 0
+        impasse_cases = len(df[df['status'].str.lower() == 'impasse']) if 'status' in df.columns else 0
+        
+        # Calculate historical statistics for forecasting
+        completed_df = df[df['status'].str.lower().isin(['approved', 'denied'])] if 'status' in df.columns else pd.DataFrame()
+        approved_df = df[df['status'].str.lower() == 'approved'] if 'status' in df.columns else pd.DataFrame()
+        historical_approval_rate = len(approved_df) / len(completed_df) if len(completed_df) > 0 else 0.5
+        historical_avg_cost = approved_df['Relief_Dollars'].mean() if 'Relief_Dollars' in approved_df.columns and len(approved_df) > 0 else 0
+        
         # === EXECUTIVE SUMMARY KPIs ===
         st.subheader("📊 Key Performance Indicators")
         
@@ -3386,7 +3413,6 @@ def show_executive_dashboard_tab():
         col1, col2, col3, col4 = st.columns(4)
         
         with col1:
-            total_actual = cost_data.get('total_actual_cost', 0)
             st.metric(
                 "💰 Total Actual Cost",
                 f"${total_actual:,.0f}",
@@ -3394,7 +3420,6 @@ def show_executive_dashboard_tab():
             )
         
         with col2:
-            total_forecasted = cost_data.get('total_forecasted_cost', 0)
             st.metric(
                 "📈 Total Forecasted Cost",
                 f"${total_forecasted:,.0f}",
@@ -3403,7 +3428,6 @@ def show_executive_dashboard_tab():
             )
         
         with col3:
-            avg_cost_per_case = cost_data.get('avg_paid_per_case', 0)
             st.metric(
                 "📋 Avg Cost per Approved Case",
                 f"${avg_cost_per_case:,.0f}",
@@ -3422,9 +3446,6 @@ def show_executive_dashboard_tab():
         col5, col6, col7, col8 = st.columns(4)
         
         with col5:
-            total_cases = len(df)
-            approved_cases = len(df[df['status'].str.lower() == 'approved']) if 'status' in df.columns else 0
-            approval_rate = (approved_cases / total_cases * 100) if total_cases > 0 else 0
             st.metric(
                 "✅ Approval Rate",
                 f"{approval_rate:.1f}%",
@@ -3432,7 +3453,6 @@ def show_executive_dashboard_tab():
             )
         
         with col6:
-            open_cases = len(df[df['status'].str.lower() == 'open']) if 'status' in df.columns else 0
             st.metric(
                 "📂 Open Cases",
                 f"{open_cases:,}",
@@ -3440,7 +3460,6 @@ def show_executive_dashboard_tab():
             )
         
         with col7:
-            denied_cases = len(df[df['status'].str.lower() == 'denied']) if 'status' in df.columns else 0
             st.metric(
                 "❌ Denied Cases",
                 f"{denied_cases:,}",
@@ -3448,7 +3467,6 @@ def show_executive_dashboard_tab():
             )
         
         with col8:
-            impasse_cases = len(df[df['status'].str.lower() == 'impasse']) if 'status' in df.columns else 0
             st.metric(
                 "⚖️ Impasse Cases",
                 f"{impasse_cases:,}",
@@ -3475,13 +3493,6 @@ def show_executive_dashboard_tab():
             # Filter data to last 12 months
             df_monthly['month_year'] = df_monthly['submission_date'].dt.to_period('M')
             df_monthly = df_monthly[df_monthly['month_year'].isin(months_range)]
-            
-            # Calculate historical approval statistics from completed cases (approved + denied)
-            completed_df = df[df['status'].str.lower().isin(['approved', 'denied'])] if 'status' in df.columns else pd.DataFrame()
-            approved_df = df[df['status'].str.lower() == 'approved'] if 'status' in df.columns else pd.DataFrame()
-            
-            historical_approval_rate = len(approved_df) / len(completed_df) if len(completed_df) > 0 else 0.5
-            historical_avg_cost = approved_df['Relief_Dollars'].mean() if 'Relief_Dollars' in approved_df.columns and len(approved_df) > 0 else 0
             
             # Monthly cost trends - ensure all 12 months are represented
             monthly_stats = []
@@ -3550,16 +3561,16 @@ def show_executive_dashboard_tab():
                 
                 st.dataframe(display_monthly, use_container_width=True)
                 
-                # Key insights
-                total_actual = monthly_df['Actual Cost'].sum()
-                total_forecasted = monthly_df['Forecasted Cost'].sum()
-                total_pending = monthly_df['Pending Cases'].sum()
+                # Key insights from monthly data
+                monthly_actual_total = monthly_df['Actual Cost'].sum()
+                monthly_forecasted_total = monthly_df['Forecasted Cost'].sum()
+                monthly_pending_total = monthly_df['Pending Cases'].sum()
                 
                 col1, col2, col3 = st.columns(3)
                 with col1:
-                    st.metric("📊 12-Month Actual Cost", f"${total_actual:,.0f}")
+                    st.metric("📊 12-Month Actual Cost", f"${monthly_actual_total:,.0f}")
                 with col2:
-                    st.metric("🔮 Pending Case Exposure", f"${total_forecasted:,.0f}", f"{total_pending} pending cases")
+                    st.metric("🔮 Pending Case Exposure", f"${monthly_forecasted_total:,.0f}", f"{monthly_pending_total} pending cases")
                 with col3:
                     st.metric("📈 Historical Approval Rate", f"{historical_approval_rate:.1%}", f"Used for forecasting")
         
