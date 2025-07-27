@@ -2224,22 +2224,23 @@ def show_financial_tab():
                 with tab2:
                     st.write("**Forecasted costs by individual violation codes**")
                     
-                    forecast_df = pd.DataFrame(list(forecast_data.items()), 
-                                             columns=['Subject', 'Forecasted Cost'])
-                    forecast_df = forecast_df[forecast_df['Forecasted Cost'] > 0].sort_values('Forecasted Cost', ascending=False)
+                    # Use the original forecast_data which contains raw individual subjects
+                    raw_forecast_df = pd.DataFrame(list(forecast_data.items()), 
+                                                 columns=['Subject', 'Forecasted Cost'])
+                    raw_forecast_df = raw_forecast_df[raw_forecast_df['Forecasted Cost'] > 0].sort_values('Forecasted Cost', ascending=False)
                     
                     # Format Forecasted Cost column for display
-                    forecast_df_display = forecast_df.copy()
-                    forecast_df_display['Forecasted Cost'] = forecast_df_display['Forecasted Cost'].apply(lambda x: f"${x:,.2f}")
+                    raw_forecast_display_df = raw_forecast_df.copy()
+                    raw_forecast_display_df['Forecasted Cost'] = raw_forecast_display_df['Forecasted Cost'].apply(lambda x: f"${x:,.2f}")
                     
                     col1, col2 = st.columns([1, 1])
                     with col1:
-                        st.dataframe(forecast_df_display, use_container_width=True)
+                        st.dataframe(raw_forecast_display_df, use_container_width=True)
                     with col2:
-                        if len(forecast_df) > 0:
+                        if len(raw_forecast_df) > 0:
                             # Use original numeric values for chart
-                            fig = px.bar(forecast_df.head(8), x='Forecasted Cost', y='Subject',
-                                       title="Top Forecasted Costs by Individual Subject", orientation='h')
+                            fig = px.bar(raw_forecast_df.head(8), x='Forecasted Cost', y='Subject',
+                                       title="Top Forecasted Costs by Individual Violation", orientation='h')
                             fig.update_xaxes(tickformat="$,.0f")
                             st.plotly_chart(fig, use_container_width=True)
             else:
