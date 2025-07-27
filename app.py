@@ -3395,12 +3395,10 @@ def show_executive_dashboard_tab():
         
         with col2:
             total_forecasted = cost_data.get('total_forecasted_cost', 0)
-            variance = total_actual - total_forecasted
-            variance_pct = (variance / total_forecasted * 100) if total_forecasted > 0 else 0
             st.metric(
                 "📈 Total Forecasted Cost",
                 f"${total_forecasted:,.0f}",
-                f"{variance_pct:+.1f}% vs actual",
+                f"{total_pending} pending cases",
                 help="Predicted cost for pending cases"
             )
         
@@ -3676,14 +3674,27 @@ def show_executive_dashboard_tab():
         # Calculate key alerts
         alerts = []
         
-        # High cost variance alert
-        if abs(variance_pct) > 20:
-            alerts.append({
-                'Type': '💰 Cost Variance',
-                'Severity': 'High' if abs(variance_pct) > 50 else 'Medium',
-                'Message': f"Actual costs are {variance_pct:+.1f}% vs forecasted ({abs(variance):,.0f} difference)",
-                'Action': 'Review forecasting model and budget allocations'
-            })
+        # High pending case exposure alert
+        if total_forecasted > 0 and total_actual > 0:
+            exposure_ratio = total_forecasted / total_actual
+            if exposure_ratio > 0.5:  # Pending exposure > 50% of historical actual costs
+                alerts.append({
+                    'Type': '💰 High Pending Exposure',
+                    'Severity': 'High' if exposure_ratio > 1.0 else 'Medium',
+                    'Message': f"Pending case exposure (${total_forecasted:,.0f}) is {exposure_ratio:.1%} of historical actual costs (${total_actual:,.0f})",
+                    'Action': 'Review and prioritize pending cases to manage potential budget impact'
+                })
+        
+        # High forecasted cost per case alert
+        if total_forecasted > 0 and total_pending > 0:
+            avg_forecasted_per_case = total_forecasted / total_pending
+            if avg_forecasted_per_case > historical_avg_cost * 1.2:  # 20% higher than historical average
+                alerts.append({
+                    'Type': '📈 High Forecasted Cost per Case',
+                    'Severity': 'Medium',
+                    'Message': f"Average forecasted cost per pending case (${avg_forecasted_per_case:,.0f}) is higher than historical average (${historical_avg_cost:,.0f})",
+                    'Action': 'Review pending cases for potential high-cost outliers'
+                })
         
         # High approval rate alert
         if approval_rate > 80:
