@@ -3448,27 +3448,44 @@ def show_executive_dashboard_tab():
             df_monthly = df.copy()
             df_monthly['submission_date'] = pd.to_datetime(df_monthly['submission_date'], errors='coerce')
             df_monthly = df_monthly.dropna(subset=['submission_date'])
-            df_monthly['month_year'] = df_monthly['submission_date'].dt.to_period('M')
             
-            # Monthly cost trends
+            # Generate last 12 months range
+            current_date = pd.Timestamp.now()
+            months_range = []
+            for i in range(11, -1, -1):  # 11 months ago to current month
+                month_start = current_date - pd.DateOffset(months=i)
+                months_range.append(month_start.to_period('M'))
+            
+            # Filter data to last 12 months
+            df_monthly['month_year'] = df_monthly['submission_date'].dt.to_period('M')
+            df_monthly = df_monthly[df_monthly['month_year'].isin(months_range)]
+            
+            # Calculate overall approval rate and average cost for forecasting
+            approved_df = df[df['status'].str.lower() == 'approved'] if 'status' in df.columns else pd.DataFrame()
+            overall_approval_rate = len(approved_df) / len(df) if len(df) > 0 else 0
+            overall_avg_cost = approved_df['Relief_Dollars'].mean() if 'Relief_Dollars' in approved_df.columns and len(approved_df) > 0 else 0
+            
+            # Monthly cost trends - ensure all 12 months are represented
             monthly_stats = []
-            for period in df_monthly['month_year'].unique():
+            for period in months_range:
                 period_data = df_monthly[df_monthly['month_year'] == period]
                 
                 approved_period = period_data[period_data['status'].str.lower() == 'approved'] if 'status' in period_data.columns else pd.DataFrame()
                 actual_cost = approved_period['Relief_Dollars'].sum() if 'Relief_Dollars' in approved_period.columns and len(approved_period) > 0 else 0
                 
                 open_period = period_data[period_data['status'].str.lower() == 'open'] if 'status' in period_data.columns else pd.DataFrame()
-                forecasted_cost = 0
-                if len(open_period) > 0 and len(approved_period) > 0:
-                    avg_approved_cost = actual_cost / len(approved_period) if len(approved_period) > 0 else 0
-                    approval_rate_period = len(approved_period) / len(period_data) if len(period_data) > 0 else 0
-                    forecasted_cost = len(open_period) * avg_approved_cost * approval_rate_period
+                in_review_period = period_data[period_data['status'].str.lower() == 'in review'] if 'status' in period_data.columns else pd.DataFrame()
+                pending_cases = len(open_period) + len(in_review_period)
+                
+                # Use overall statistics for more realistic forecasting
+                forecasted_cost = pending_cases * overall_avg_cost * overall_approval_rate
                 
                 monthly_stats.append({
-                    'Month': str(period),
+                    'Month': period.strftime('%Y-%m'),
+                    'Month_Display': period.strftime('%b %Y'),
                     'Total Cases': len(period_data),
                     'Approved Cases': len(approved_period),
+                    'Pending Cases': pending_cases,
                     'Actual Cost': actual_cost,
                     'Forecasted Cost': forecasted_cost,
                     'Total Exposure': actual_cost + forecasted_cost
@@ -3476,29 +3493,30 @@ def show_executive_dashboard_tab():
             
             if monthly_stats:
                 monthly_df = pd.DataFrame(monthly_stats)
-                monthly_df = monthly_df.sort_values('Month')
                 
                 col1, col2 = st.columns(2)
                 
                 with col1:
                     # Monthly cost trends chart
-                    fig = px.line(monthly_df, x='Month', y=['Actual Cost', 'Forecasted Cost'], 
-                                title="Monthly Cost Trends",
-                                labels={'value': 'Cost ($)', 'variable': 'Cost Type'})
-                    fig.update_layout(height=400)
+                    fig = px.line(monthly_df, x='Month_Display', y=['Actual Cost', 'Forecasted Cost'], 
+                                title="Monthly Cost Trends (Last 12 Months)",
+                                labels={'value': 'Cost ($)', 'variable': 'Cost Type', 'Month_Display': 'Month'})
+                    fig.update_layout(height=400, xaxis={'tickangle': 45})
                     st.plotly_chart(fig, use_container_width=True)
                 
                 with col2:
                     # Monthly case volume
-                    fig = px.bar(monthly_df, x='Month', y='Total Cases',
-                               title="Monthly Case Volume",
-                               labels={'Total Cases': 'Number of Cases'})
-                    fig.update_layout(height=400)
+                    fig = px.bar(monthly_df, x='Month_Display', y='Total Cases',
+                               title="Monthly Case Volume (Last 12 Months)",
+                               labels={'Total Cases': 'Number of Cases', 'Month_Display': 'Month'})
+                    fig.update_layout(height=400, xaxis={'tickangle': 45})
                     st.plotly_chart(fig, use_container_width=True)
                 
-                # Monthly summary table
-                st.subheader("📊 Monthly Summary Table")
+                # Monthly summary table (last 12 months only)
+                st.subheader("📊 Monthly Summary Table (Last 12 Months)")
                 display_monthly = monthly_df.copy()
+                display_monthly = display_monthly[['Month_Display', 'Total Cases', 'Approved Cases', 'Pending Cases', 'Actual Cost', 'Forecasted Cost', 'Total Exposure']]
+                display_monthly.columns = ['Month', 'Total Cases', 'Approved Cases', 'Pending Cases', 'Actual Cost', 'Forecasted Cost', 'Total Exposure']
                 display_monthly['Actual Cost'] = display_monthly['Actual Cost'].apply(lambda x: f"${x:,.0f}")
                 display_monthly['Forecasted Cost'] = display_monthly['Forecasted Cost'].apply(lambda x: f"${x:,.0f}")
                 display_monthly['Total Exposure'] = display_monthly['Total Exposure'].apply(lambda x: f"${x:,.0f}")
@@ -3546,15 +3564,13 @@ def show_executive_dashboard_tab():
                 pilot_risk_df = pd.DataFrame(pilot_risk_data)
                 pilot_risk_df = pilot_risk_df.sort_values('Risk Score', ascending=False).head(15)
                 
-                st.dataframe(
-                    pilot_risk_df,
-                    use_container_width=True,
-                    column_config={
-                        'Total Cost': st.column_config.NumberColumn('Total Cost', format="$%.0f"),
-                        'Avg Cost per Case': st.column_config.NumberColumn('Avg Cost per Case', format="$%.0f"),
-                        'Risk Score': st.column_config.NumberColumn('Risk Score', format="%.0f")
-                    }
-                )
+                # Format display
+                pilot_risk_display = pilot_risk_df.copy()
+                pilot_risk_display['Total Cost'] = pilot_risk_display['Total Cost'].apply(lambda x: f"${x:,.2f}")
+                pilot_risk_display['Avg Cost per Case'] = pilot_risk_display['Avg Cost per Case'].apply(lambda x: f"${x:,.2f}")
+                pilot_risk_display['Risk Score'] = pilot_risk_display['Risk Score'].apply(lambda x: f"{x:,.0f}")
+                
+                st.dataframe(pilot_risk_display, use_container_width=True)
         
         with tab3:
             # Cost by subject analysis
@@ -3577,21 +3593,22 @@ def show_executive_dashboard_tab():
             
             col1, col2 = st.columns(2)
             with col1:
-                st.dataframe(
-                    subject_costs_df,
-                    use_container_width=True,
-                    column_config={
-                        'Total Cost': st.column_config.NumberColumn('Total Cost', format="$%.0f"),
-                        'Avg Cost per Case': st.column_config.NumberColumn('Avg Cost per Case', format="$%.0f")
-                    }
-                )
+                # Format display
+                subject_costs_display = subject_costs_df.copy()
+                subject_costs_display['Total Cost'] = subject_costs_display['Total Cost'].apply(lambda x: f"${x:,.2f}")
+                subject_costs_display['Avg Cost per Case'] = subject_costs_display['Avg Cost per Case'].apply(lambda x: f"${x:,.2f}")
+                
+                st.dataframe(subject_costs_display, use_container_width=True)
             
             with col2:
                 # Top subjects by cost
                 top_subjects = subject_costs_df.head(8)
-                fig = px.pie(top_subjects, values='Total Cost', names='Subject',
-                           title="Cost Distribution by Subject (Top 8)")
-                st.plotly_chart(fig, use_container_width=True)
+                if len(top_subjects) > 0 and top_subjects['Total Cost'].sum() > 0:
+                    fig = px.pie(top_subjects, values='Total Cost', names='Subject',
+                               title="Cost Distribution by Subject (Top 8)")
+                    st.plotly_chart(fig, use_container_width=True)
+                else:
+                    st.info("No cost data available for pie chart")
         
         # === BUDGET IMPACT ALERTS ===
         st.subheader("🚨 Budget Impact Alerts")
@@ -3638,7 +3655,6 @@ def show_executive_dashboard_tab():
 def show_comprehensive_analytics_tab():
     """Show comprehensive analytics matching original script detail"""
     st.header("🔍 Comprehensive Analytics")
-    st.markdown("*Complete analytics matching original script with full detail and breakdown*")
     
     df = get_data()
     if df.empty:
