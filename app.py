@@ -1062,12 +1062,18 @@ def show_analytics_tab():
         st.subheader("🏆 Top 20 Highest Value Claims")
         if analytics['top_20_claims']:
             top_claims_df = pd.DataFrame(analytics['top_20_claims'])
-            st.dataframe(top_claims_df, use_container_width=True)
+            # Format relief_dollars column for display
+            top_claims_display_df = top_claims_df.copy()
+            if 'relief_dollars' in top_claims_display_df.columns:
+                top_claims_display_df['relief_dollars'] = top_claims_display_df['relief_dollars'].apply(lambda x: f"${x:,.2f}" if pd.notnull(x) else "$0.00")
+            st.dataframe(top_claims_display_df, use_container_width=True)
             
-            # Chart for top 10
+            # Chart for top 10 (use original numeric values)
             fig = px.bar(top_claims_df.head(10), x='case_number', y='relief_dollars',
                         title="Top 10 Claims by Relief Value", hover_data=['pilot', 'subject'])
             fig.update_xaxes(tickangle=45)
+            # Format y-axis to show currency
+            fig.update_yaxes(tickformat="$,.0f")
             st.plotly_chart(fig, use_container_width=True)
         
         # ===== NEW: TOP 20 PILOTS BY RELIEF AMOUNT (FROM ORIGINAL SCRIPT) =====
@@ -1077,13 +1083,20 @@ def show_analytics_tab():
                                                columns=['Pilot', 'Total Relief ($)'])
             top_pilots_relief_df = top_pilots_relief_df.sort_values('Total Relief ($)', ascending=False)
             
+            # Format the Total Relief ($) column for display
+            top_pilots_relief_display_df = top_pilots_relief_df.copy()
+            top_pilots_relief_display_df['Total Relief ($)'] = top_pilots_relief_display_df['Total Relief ($)'].apply(lambda x: f"${x:,.2f}" if pd.notnull(x) else "$0.00")
+            
             col1, col2 = st.columns([2, 1])
             with col1:
-                st.dataframe(top_pilots_relief_df, use_container_width=True)
+                st.dataframe(top_pilots_relief_display_df, use_container_width=True)
             with col2:
+                # Use original numeric values for chart
                 fig = px.bar(top_pilots_relief_df.head(10), x='Total Relief ($)', y='Pilot',
                            title="Top 10 Pilots by Relief Amount", orientation='h')
                 fig.update_layout(height=400)
+                # Format x-axis to show currency
+                fig.update_xaxes(tickformat="$,.0f")
                 st.plotly_chart(fig, use_container_width=True)
         
         # Top 20 Pilots by Relief Amount per Status
@@ -1358,8 +1371,11 @@ def show_analytics_tab():
             outliers = analytics['outlier_analysis']['high_cost_outliers']
             if outliers:
                 outliers_df = pd.DataFrame(outliers)
-                st.dataframe(outliers_df[['case_number', 'pilot', 'subject', 'relief_dollars', 'status']], 
-                           use_container_width=True)
+                # Format relief_dollars column
+                outliers_display_df = outliers_df[['case_number', 'pilot', 'subject', 'relief_dollars', 'status']].copy()
+                if 'relief_dollars' in outliers_display_df.columns:
+                    outliers_display_df['relief_dollars'] = outliers_display_df['relief_dollars'].apply(lambda x: f"${x:,.2f}" if pd.notnull(x) else "$0.00")
+                st.dataframe(outliers_display_df, use_container_width=True)
         
         # Monthly trends
         if analytics.get('monthly_trends'):
@@ -1400,9 +1416,16 @@ def show_analytics_tab():
             pilot_detailed_df = pd.DataFrame(pilot_detailed)
             pilot_detailed_df = pilot_detailed_df.sort_values('Total Cases', ascending=False)
             
+            # Format dollar columns for display
+            pilot_detailed_display_df = pilot_detailed_df.copy()
+            if 'Total Relief ($)' in pilot_detailed_display_df.columns:
+                pilot_detailed_display_df['Total Relief ($)'] = pilot_detailed_display_df['Total Relief ($)'].apply(lambda x: f"${x:,.2f}" if pd.notnull(x) else "$0.00")
+            if 'Avg Relief ($)' in pilot_detailed_display_df.columns:
+                pilot_detailed_display_df['Avg Relief ($)'] = pilot_detailed_display_df['Avg Relief ($)'].apply(lambda x: f"${x:,.2f}" if pd.notnull(x) else "$0.00")
+            
             col1, col2 = st.columns([2, 1])
             with col1:
-                st.dataframe(pilot_detailed_df, use_container_width=True, height=400)
+                st.dataframe(pilot_detailed_display_df, use_container_width=True, height=400)
             with col2:
                 # Top 10 pilots by cases chart
                 fig = px.bar(pilot_detailed_df.head(10), x='Total Cases', y='Pilot',
@@ -1558,6 +1581,8 @@ def show_financial_tab():
                 fig = px.bar(top_subjects, x='Dollar Value', y='Subject',
                            title="Top 8 Subjects by Relief Value", orientation='h')
                 fig.update_layout(height=350)
+                # Format x-axis to show currency
+                fig.update_xaxes(tickformat="$,.0f")
                 st.plotly_chart(fig, use_container_width=True)
             
             # Summary metrics for relief by subject
@@ -1607,13 +1632,20 @@ def show_financial_tab():
                                          columns=['Subject', 'Forecasted Cost'])
                 forecast_df = forecast_df[forecast_df['Forecasted Cost'] > 0].sort_values('Forecasted Cost', ascending=False)
                 
+                # Format Forecasted Cost column for display
+                forecast_df_display = forecast_df.copy()
+                forecast_df_display['Forecasted Cost'] = forecast_df_display['Forecasted Cost'].apply(lambda x: f"${x:,.2f}" if pd.notnull(x) else "$0.00")
+                
                 col1, col2 = st.columns([1, 1])
                 with col1:
-                    st.dataframe(forecast_df, use_container_width=True)
+                    st.dataframe(forecast_df_display, use_container_width=True)
                 with col2:
                     if len(forecast_df) > 0:
+                        # Use original numeric values for chart
                         fig = px.bar(forecast_df.head(8), x='Forecasted Cost', y='Subject',
                                    title="Top Forecasted Costs by Subject", orientation='h')
+                        # Format x-axis to show currency
+                        fig.update_xaxes(tickformat="$,.0f")
                         st.plotly_chart(fig, use_container_width=True)
             else:
                 st.info("No positive forecasted costs to display")
