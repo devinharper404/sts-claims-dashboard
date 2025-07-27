@@ -1617,11 +1617,19 @@ def show_analytics_tab():
             outliers = analytics['outlier_analysis']['high_cost_outliers']
             if outliers:
                 outliers_df = pd.DataFrame(outliers)
-                # Format relief_dollars column
+                # Display with proper column formatting for sorting (keep numeric values)
                 outliers_display_df = outliers_df[['case_number', 'pilot', 'subject', 'relief_dollars', 'status']].copy()
-                if 'relief_dollars' in outliers_display_df.columns:
-                    outliers_display_df['relief_dollars'] = outliers_display_df['relief_dollars'].apply(lambda x: f"${x:,.2f}" if pd.notnull(x) else "$0.00")
-                st.dataframe(outliers_display_df, use_container_width=True)
+                
+                st.dataframe(
+                    outliers_display_df, 
+                    use_container_width=True,
+                    column_config={
+                        'relief_dollars': st.column_config.NumberColumn(
+                            'relief_dollars',
+                            format="$%.2f"
+                        )
+                    }
+                )
         
         # Monthly trends
         if analytics.get('monthly_trends'):
