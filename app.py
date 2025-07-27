@@ -3442,6 +3442,7 @@ def show_executive_dashboard_tab():
         
         # === MONTHLY COST TRENDS ===
         st.subheader("📅 Monthly Cost Control Analysis")
+        st.markdown("*Based on case submission dates. Shows actual costs for approved cases and forecasted costs for pending cases.*")
         
         # Create monthly analysis
         if 'submission_date' in df.columns:
@@ -3460,32 +3461,36 @@ def show_executive_dashboard_tab():
             df_monthly['month_year'] = df_monthly['submission_date'].dt.to_period('M')
             df_monthly = df_monthly[df_monthly['month_year'].isin(months_range)]
             
-            # Calculate overall approval rate and average cost for forecasting
+            # Calculate historical approval statistics from completed cases (approved + denied)
+            completed_df = df[df['status'].str.lower().isin(['approved', 'denied'])] if 'status' in df.columns else pd.DataFrame()
             approved_df = df[df['status'].str.lower() == 'approved'] if 'status' in df.columns else pd.DataFrame()
-            overall_approval_rate = len(approved_df) / len(df) if len(df) > 0 else 0
-            overall_avg_cost = approved_df['Relief_Dollars'].mean() if 'Relief_Dollars' in approved_df.columns and len(approved_df) > 0 else 0
+            
+            historical_approval_rate = len(approved_df) / len(completed_df) if len(completed_df) > 0 else 0.5
+            historical_avg_cost = approved_df['Relief_Dollars'].mean() if 'Relief_Dollars' in approved_df.columns and len(approved_df) > 0 else 0
             
             # Monthly cost trends - ensure all 12 months are represented
             monthly_stats = []
             for period in months_range:
                 period_data = df_monthly[df_monthly['month_year'] == period]
                 
+                # Actual costs (approved cases only)
                 approved_period = period_data[period_data['status'].str.lower() == 'approved'] if 'status' in period_data.columns else pd.DataFrame()
                 actual_cost = approved_period['Relief_Dollars'].sum() if 'Relief_Dollars' in approved_period.columns and len(approved_period) > 0 else 0
                 
-                open_period = period_data[period_data['status'].str.lower() == 'open'] if 'status' in period_data.columns else pd.DataFrame()
-                in_review_period = period_data[period_data['status'].str.lower() == 'in review'] if 'status' in period_data.columns else pd.DataFrame()
-                pending_cases = len(open_period) + len(in_review_period)
+                # Forecasted costs (pending cases: open + in review)
+                pending_period = period_data[period_data['status'].str.lower().isin(['open', 'in review'])] if 'status' in period_data.columns else pd.DataFrame()
+                forecasted_cost = len(pending_period) * historical_avg_cost * historical_approval_rate
                 
-                # Use overall statistics for more realistic forecasting
-                forecasted_cost = pending_cases * overall_avg_cost * overall_approval_rate
+                # Denied cases (for reference)
+                denied_period = period_data[period_data['status'].str.lower() == 'denied'] if 'status' in period_data.columns else pd.DataFrame()
                 
                 monthly_stats.append({
                     'Month': period.strftime('%Y-%m'),
                     'Month_Display': period.strftime('%b %Y'),
-                    'Total Cases': len(period_data),
+                    'Cases Submitted': len(period_data),
                     'Approved Cases': len(approved_period),
-                    'Pending Cases': pending_cases,
+                    'Pending Cases': len(pending_period),
+                    'Denied Cases': len(denied_period),
                     'Actual Cost': actual_cost,
                     'Forecasted Cost': forecasted_cost,
                     'Total Exposure': actual_cost + forecasted_cost
@@ -3497,30 +3502,46 @@ def show_executive_dashboard_tab():
                 col1, col2 = st.columns(2)
                 
                 with col1:
-                    # Monthly cost trends chart
+                    # Monthly cost trends chart with better explanation
                     fig = px.line(monthly_df, x='Month_Display', y=['Actual Cost', 'Forecasted Cost'], 
-                                title="Monthly Cost Trends (Last 12 Months)",
+                                title="Monthly Cost Analysis (Last 12 Months)<br><sub>Actual = Approved cases cost | Forecasted = Pending cases estimated cost</sub>",
                                 labels={'value': 'Cost ($)', 'variable': 'Cost Type', 'Month_Display': 'Month'})
                     fig.update_layout(height=400, xaxis={'tickangle': 45})
                     st.plotly_chart(fig, use_container_width=True)
                 
                 with col2:
-                    # Monthly case volume
-                    fig = px.bar(monthly_df, x='Month_Display', y='Total Cases',
-                               title="Monthly Case Volume (Last 12 Months)",
-                               labels={'Total Cases': 'Number of Cases', 'Month_Display': 'Month'})
+                    # Monthly case volume by submission date
+                    fig = px.bar(monthly_df, x='Month_Display', y='Cases Submitted',
+                               title="Cases Submitted by Month (Last 12 Months)<br><sub>Based on case submission date</sub>",
+                               labels={'Cases Submitted': 'Number of Cases Submitted', 'Month_Display': 'Month'})
                     fig.update_layout(height=400, xaxis={'tickangle': 45})
                     st.plotly_chart(fig, use_container_width=True)
                 
-                # Monthly summary table (last 12 months only)
+                # Enhanced monthly summary table
                 st.subheader("📊 Monthly Summary Table (Last 12 Months)")
+                st.markdown("*Cases grouped by submission date. Actual costs from approved cases, forecasted costs from pending cases using historical approval rates.*")
+                
                 display_monthly = monthly_df.copy()
-                display_monthly = display_monthly[['Month_Display', 'Total Cases', 'Approved Cases', 'Pending Cases', 'Actual Cost', 'Forecasted Cost', 'Total Exposure']]
-                display_monthly.columns = ['Month', 'Total Cases', 'Approved Cases', 'Pending Cases', 'Actual Cost', 'Forecasted Cost', 'Total Exposure']
+                display_monthly = display_monthly[['Month_Display', 'Cases Submitted', 'Approved Cases', 'Pending Cases', 'Denied Cases', 'Actual Cost', 'Forecasted Cost', 'Total Exposure']]
+                display_monthly.columns = ['Month', 'Cases Submitted', 'Approved', 'Pending', 'Denied', 'Actual Cost', 'Forecasted Cost', 'Total Exposure']
                 display_monthly['Actual Cost'] = display_monthly['Actual Cost'].apply(lambda x: f"${x:,.0f}")
                 display_monthly['Forecasted Cost'] = display_monthly['Forecasted Cost'].apply(lambda x: f"${x:,.0f}")
                 display_monthly['Total Exposure'] = display_monthly['Total Exposure'].apply(lambda x: f"${x:,.0f}")
+                
                 st.dataframe(display_monthly, use_container_width=True)
+                
+                # Key insights
+                total_actual = monthly_df['Actual Cost'].sum()
+                total_forecasted = monthly_df['Forecasted Cost'].sum()
+                total_pending = monthly_df['Pending Cases'].sum()
+                
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.metric("📊 12-Month Actual Cost", f"${total_actual:,.0f}")
+                with col2:
+                    st.metric("🔮 Pending Case Exposure", f"${total_forecasted:,.0f}", f"{total_pending} pending cases")
+                with col3:
+                    st.metric("📈 Historical Approval Rate", f"{historical_approval_rate:.1%}", f"Used for forecasting")
         
         # === HIGH-RISK COST ANALYSIS ===
         st.subheader("🚨 High-Risk Cost Analysis")
