@@ -3597,7 +3597,25 @@ def show_executive_dashboard_tab():
                     total_top10_cost = high_cost_cases['Relief_Dollars'].sum()
                     total_open_cost = open_cases['Relief_Dollars'].sum()
                     top10_percentage = (total_top10_cost / total_open_cost * 100) if total_open_cost > 0 else 0
-                    st.info(f"💡 **Insight:** Top 10 open cases represent {top10_percentage:.1f}% of total open case cost exposure (${total_top10_cost:,.0f} of ${total_open_cost:,.0f})")
+                    
+                    # Better formatted insight
+                    st.markdown("---")
+                    st.markdown("**💡 Key Insights:**")
+                    
+                    col_a, col_b, col_c = st.columns(3)
+                    with col_a:
+                        st.metric("🔟 Top 10 Cost", f"${total_top10_cost:,.0f}")
+                    with col_b:
+                        st.metric("� Total Open Cost", f"${total_open_cost:,.0f}")
+                    with col_c:
+                        st.metric("📈 Top 10 Share", f"{top10_percentage:.1f}%")
+                    
+                    if top10_percentage > 50:
+                        st.success(f"✅ **Concentrated Risk:** Top 10 cases represent majority ({top10_percentage:.1f}%) of open case exposure")
+                    elif top10_percentage > 30:
+                        st.info(f"ℹ️ **Moderate Concentration:** Top 10 cases represent {top10_percentage:.1f}% of open case exposure")
+                    else:
+                        st.warning(f"⚠️ **Distributed Risk:** Top 10 cases represent only {top10_percentage:.1f}% - risk is spread across many cases")
                     
                     col1, col2 = st.columns(2)
                     with col1:
