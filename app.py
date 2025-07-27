@@ -1279,26 +1279,71 @@ def show_analytics_tab():
         
         # ===== VIOLATION TYPE ANALYSIS =====
         st.subheader("⚖️ Violation Type Analysis")
-        if analytics.get('violation_counter'):
-            violation_df = pd.DataFrame([
-                {'Violation': violation, 'Count': count, 'Percentage': f"{analytics['violation_percentages'][violation]:.2f}%"}
-                for violation, count in analytics['violation_counter'].items()
-            ])
-            violation_df = violation_df.sort_values('Count', ascending=False)
-            
-            col1, col2 = st.columns([2, 1])
-            with col1:
-                st.dataframe(violation_df, use_container_width=True, height=400)
-            with col2:
-                st.metric("Total Unique Violation Types", analytics.get('unique_violation_types', 0))
-                st.metric("Recent Cases (Last 7 Days)", analytics.get('recent_cases', 0))
+        
+        # Create tabs for raw vs grouped violations
+        tab1, tab2 = st.tabs(["📋 Raw Violations", "📊 Grouped Violations"])
+        
+        with tab1:
+            st.write("**Individual violation codes and subjects**")
+            if analytics.get('violation_counter'):
+                violation_df = pd.DataFrame([
+                    {'Violation': violation, 'Count': count, 'Percentage': f"{analytics['violation_percentages'][violation]:.2f}%"}
+                    for violation, count in analytics['violation_counter'].items()
+                ])
+                violation_df = violation_df.sort_values('Count', ascending=False)
                 
-                # Top violations chart
-                top_violations = violation_df.head(8)
-                fig = px.bar(top_violations, x='Count', y='Violation',
-                           title="Top 8 Violation Types", orientation='h')
-                fig.update_layout(height=300)
-                st.plotly_chart(fig, use_container_width=True)
+                col1, col2 = st.columns([2, 1])
+                with col1:
+                    st.dataframe(violation_df, use_container_width=True, height=400)
+                with col2:
+                    st.metric("Total Unique Violation Types", analytics.get('unique_violation_types', 0))
+                    st.metric("Recent Cases (Last 7 Days)", analytics.get('recent_cases', 0))
+                    
+                    # Top violations chart
+                    top_violations = violation_df.head(8)
+                    fig = px.bar(top_violations, x='Count', y='Violation',
+                               title="Top 8 Individual Violations", orientation='h')
+                    fig.update_layout(height=300)
+                    st.plotly_chart(fig, use_container_width=True)
+        
+        with tab2:
+            st.write("**Violations grouped by subject categories**")
+            # Calculate grouped violation statistics
+            if not df.empty:
+                # Add Subject_Grouped column if not already present
+                df_grouped = df.copy()
+                if 'Subject_Grouped' not in df_grouped.columns:
+                    df_grouped['Subject_Grouped'] = df_grouped['subject'].apply(group_subject_key)
+                
+                # Calculate grouped statistics
+                grouped_violations = df_grouped['Subject_Grouped'].value_counts()
+                total_grouped_cases = grouped_violations.sum()
+                
+                grouped_violation_df = pd.DataFrame([
+                    {
+                        'Violation Group': group, 
+                        'Count': count, 
+                        'Percentage': f"{(count/total_grouped_cases*100):.2f}%"
+                    }
+                    for group, count in grouped_violations.items()
+                ])
+                grouped_violation_df = grouped_violation_df.sort_values('Count', ascending=False)
+                
+                col1, col2 = st.columns([2, 1])
+                with col1:
+                    st.dataframe(grouped_violation_df, use_container_width=True, height=400)
+                with col2:
+                    st.metric("Total Violation Groups", len(grouped_violations))
+                    st.metric("Recent Cases (Last 7 Days)", analytics.get('recent_cases', 0))
+                    
+                    # Top grouped violations chart
+                    top_grouped = grouped_violation_df.head(8)
+                    fig = px.bar(top_grouped, x='Count', y='Violation Group',
+                               title="Top 8 Violation Groups", orientation='h')
+                    fig.update_layout(height=300)
+                    st.plotly_chart(fig, use_container_width=True)
+            else:
+                st.warning("No data available for grouped violation analysis.")
         
         # ===== OLDEST CASES =====
         if analytics.get('oldest_5_cases'):
