@@ -1661,13 +1661,20 @@ def show_financial_tab():
                 forecast_pilots_df = forecast_pilots_df[forecast_pilots_df['Forecasted Cost'] > 0]
                 
                 if len(forecast_pilots_df) > 0:
+                    # Format for display
+                    forecast_pilots_display_df = forecast_pilots_df.copy()
+                    forecast_pilots_display_df['Forecasted Cost'] = forecast_pilots_display_df['Forecasted Cost'].apply(lambda x: f"${x:,.2f}")
+                    
                     col1, col2 = st.columns([2, 1])
                     with col1:
-                        st.dataframe(forecast_pilots_df, use_container_width=True)
+                        st.dataframe(forecast_pilots_display_df, use_container_width=True)
                     with col2:
+                        # Use original numeric values for chart
                         fig = px.bar(forecast_pilots_df.head(10), x='Forecasted Cost', y='Pilot',
                                    title="Top 10 Forecasted by Pilot", orientation='h')
                         fig.update_layout(height=400)
+                        # Format x-axis to show currency
+                        fig.update_xaxes(tickformat="$,.0f")
                         st.plotly_chart(fig, use_container_width=True)
                 else:
                     st.info("No positive pilot forecasts to display")
@@ -1683,13 +1690,20 @@ def show_financial_tab():
                                           columns=['Violation', 'Forecasted Cost'])
                 violation_df = violation_df.sort_values('Forecasted Cost', ascending=False)
                 
+                # Format for display
+                violation_df_display = violation_df.copy()
+                violation_df_display['Forecasted Cost'] = violation_df_display['Forecasted Cost'].apply(lambda x: f"${x:,.2f}")
+                
                 col1, col2 = st.columns([2, 1])
                 with col1:
-                    st.dataframe(violation_df, use_container_width=True, height=300)
+                    st.dataframe(violation_df_display, use_container_width=True, height=300)
                 with col2:
+                    # Use original numeric values for chart
                     fig = px.bar(violation_df.head(8), x='Forecasted Cost', y='Violation',
                                title="Top Violations by Forecast", orientation='h')
                     fig.update_layout(height=300)
+                    # Format x-axis to show currency
+                    fig.update_xaxes(tickformat="$,.0f")
                     st.plotly_chart(fig, use_container_width=True)
         
         # Forecasted Cost by Month
@@ -1859,7 +1873,12 @@ def show_claims_details_tab():
         display_columns.append('relief_dollars')
     display_columns.extend([col for col in filtered_df.columns if col not in display_columns])
     
-    st.dataframe(filtered_df[display_columns], use_container_width=True)
+    # Format relief_dollars for display
+    display_df = filtered_df[display_columns].copy()
+    if 'relief_dollars' in display_df.columns:
+        display_df['relief_dollars'] = display_df['relief_dollars'].apply(lambda x: f"${x:,.2f}")
+    
+    st.dataframe(display_df, use_container_width=True)
     
     # Quick Pilot Analytics
     st.subheader("👨‍✈️ Quick Pilot Analytics")
