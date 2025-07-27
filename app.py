@@ -3328,7 +3328,7 @@ python sts_totalpackage_v2_Version5_Version2.py
                 st.metric("Total Relief Value", f"${df[relief_col].sum():,.2f}")
     
     # Main content tabs
-    tab1, tab2, tab3, tab4, tab5 = st.tabs(["📈 Overview", "📊 Analytics", "💰 Financial", "📋 Claims Details", "🔍 Comprehensive Analytics"])
+    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["📈 Overview", "📊 Analytics", "💰 Financial", "📋 Claims Details", "🔍 Comprehensive Analytics", "🏢 Executive Dashboard"])
     
     with tab1:
         show_overview_tab()
@@ -3344,6 +3344,296 @@ python sts_totalpackage_v2_Version5_Version2.py
     
     with tab5:
         show_comprehensive_analytics_tab()
+    
+    with tab6:
+        show_executive_dashboard_tab()
+
+def show_executive_dashboard_tab():
+    """Executive Cost Control Dashboard for business leaders and analysts"""
+    st.header("🏢 Executive Cost Control Dashboard")
+    
+    df = get_data()
+    if df.empty:
+        st.warning("No data available for executive dashboard.")
+        return
+    
+    try:
+        relief_rate = st.session_state.get('relief_rate', 320.47)
+        analytics = calculate_comprehensive_analytics(df, relief_rate)
+        cost_data = analytics['cost_analytics']
+        
+        # === EXECUTIVE SUMMARY KPIs ===
+        st.subheader("📊 Key Performance Indicators")
+        
+        # Top row - Critical financial metrics
+        col1, col2, col3, col4 = st.columns(4)
+        
+        with col1:
+            total_actual = cost_data.get('total_actual_cost', 0)
+            st.metric(
+                "💰 Total Actual Cost",
+                f"${total_actual:,.0f}",
+                help="Total cost of approved cases"
+            )
+        
+        with col2:
+            total_forecasted = cost_data.get('total_forecasted_cost', 0)
+            variance = total_actual - total_forecasted
+            variance_pct = (variance / total_forecasted * 100) if total_forecasted > 0 else 0
+            st.metric(
+                "📈 Total Forecasted Cost",
+                f"${total_forecasted:,.0f}",
+                f"{variance_pct:+.1f}% vs actual",
+                help="Predicted cost for pending cases"
+            )
+        
+        with col3:
+            avg_cost_per_case = cost_data.get('avg_paid_per_case', 0)
+            st.metric(
+                "📋 Avg Cost per Approved Case",
+                f"${avg_cost_per_case:,.0f}",
+                help="Average cost when cases are approved"
+            )
+        
+        with col4:
+            total_exposure = total_actual + total_forecasted
+            st.metric(
+                "⚡ Total Cost Exposure",
+                f"${total_exposure:,.0f}",
+                help="Actual + Forecasted potential costs"
+            )
+        
+        # Second row - Operational metrics
+        col5, col6, col7, col8 = st.columns(4)
+        
+        with col5:
+            total_cases = len(df)
+            approved_cases = len(df[df['status'].str.lower() == 'approved']) if 'status' in df.columns else 0
+            approval_rate = (approved_cases / total_cases * 100) if total_cases > 0 else 0
+            st.metric(
+                "✅ Approval Rate",
+                f"{approval_rate:.1f}%",
+                f"{approved_cases}/{total_cases} cases"
+            )
+        
+        with col6:
+            open_cases = len(df[df['status'].str.lower() == 'open']) if 'status' in df.columns else 0
+            st.metric(
+                "📂 Open Cases",
+                f"{open_cases:,}",
+                f"{(open_cases/total_cases*100):.1f}% of total" if total_cases > 0 else "0%"
+            )
+        
+        with col7:
+            denied_cases = len(df[df['status'].str.lower() == 'denied']) if 'status' in df.columns else 0
+            st.metric(
+                "❌ Denied Cases",
+                f"{denied_cases:,}",
+                f"{(denied_cases/total_cases*100):.1f}% of total" if total_cases > 0 else "0%"
+            )
+        
+        with col8:
+            impasse_cases = len(df[df['status'].str.lower() == 'impasse']) if 'status' in df.columns else 0
+            st.metric(
+                "⚖️ Impasse Cases",
+                f"{impasse_cases:,}",
+                f"{(impasse_cases/total_cases*100):.1f}% of total" if total_cases > 0 else "0%"
+            )
+        
+        # === MONTHLY COST TRENDS ===
+        st.subheader("📅 Monthly Cost Control Analysis")
+        
+        # Create monthly analysis
+        if 'submission_date' in df.columns:
+            df_monthly = df.copy()
+            df_monthly['submission_date'] = pd.to_datetime(df_monthly['submission_date'], errors='coerce')
+            df_monthly = df_monthly.dropna(subset=['submission_date'])
+            df_monthly['month_year'] = df_monthly['submission_date'].dt.to_period('M')
+            
+            # Monthly cost trends
+            monthly_stats = []
+            for period in df_monthly['month_year'].unique():
+                period_data = df_monthly[df_monthly['month_year'] == period]
+                
+                approved_period = period_data[period_data['status'].str.lower() == 'approved'] if 'status' in period_data.columns else pd.DataFrame()
+                actual_cost = approved_period['Relief_Dollars'].sum() if 'Relief_Dollars' in approved_period.columns and len(approved_period) > 0 else 0
+                
+                open_period = period_data[period_data['status'].str.lower() == 'open'] if 'status' in period_data.columns else pd.DataFrame()
+                forecasted_cost = 0
+                if len(open_period) > 0 and len(approved_period) > 0:
+                    avg_approved_cost = actual_cost / len(approved_period) if len(approved_period) > 0 else 0
+                    approval_rate_period = len(approved_period) / len(period_data) if len(period_data) > 0 else 0
+                    forecasted_cost = len(open_period) * avg_approved_cost * approval_rate_period
+                
+                monthly_stats.append({
+                    'Month': str(period),
+                    'Total Cases': len(period_data),
+                    'Approved Cases': len(approved_period),
+                    'Actual Cost': actual_cost,
+                    'Forecasted Cost': forecasted_cost,
+                    'Total Exposure': actual_cost + forecasted_cost
+                })
+            
+            if monthly_stats:
+                monthly_df = pd.DataFrame(monthly_stats)
+                monthly_df = monthly_df.sort_values('Month')
+                
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    # Monthly cost trends chart
+                    fig = px.line(monthly_df, x='Month', y=['Actual Cost', 'Forecasted Cost'], 
+                                title="Monthly Cost Trends",
+                                labels={'value': 'Cost ($)', 'variable': 'Cost Type'})
+                    fig.update_layout(height=400)
+                    st.plotly_chart(fig, use_container_width=True)
+                
+                with col2:
+                    # Monthly case volume
+                    fig = px.bar(monthly_df, x='Month', y='Total Cases',
+                               title="Monthly Case Volume",
+                               labels={'Total Cases': 'Number of Cases'})
+                    fig.update_layout(height=400)
+                    st.plotly_chart(fig, use_container_width=True)
+                
+                # Monthly summary table
+                st.subheader("📊 Monthly Summary Table")
+                display_monthly = monthly_df.copy()
+                display_monthly['Actual Cost'] = display_monthly['Actual Cost'].apply(lambda x: f"${x:,.0f}")
+                display_monthly['Forecasted Cost'] = display_monthly['Forecasted Cost'].apply(lambda x: f"${x:,.0f}")
+                display_monthly['Total Exposure'] = display_monthly['Total Exposure'].apply(lambda x: f"${x:,.0f}")
+                st.dataframe(display_monthly, use_container_width=True)
+        
+        # === HIGH-RISK COST ANALYSIS ===
+        st.subheader("🚨 High-Risk Cost Analysis")
+        
+        tab1, tab2, tab3 = st.tabs(["💸 Highest Cost Cases", "👥 High-Risk Pilots", "📋 Cost by Subject"])
+        
+        with tab1:
+            # Top cost cases
+            if 'Relief_Dollars' in df.columns:
+                high_cost_cases = df.nlargest(10, 'Relief_Dollars')[['case_number', 'pilot', 'subject', 'Relief_Dollars', 'status']]
+                high_cost_cases_display = high_cost_cases.copy()
+                high_cost_cases_display['Relief_Dollars'] = high_cost_cases_display['Relief_Dollars'].apply(lambda x: f"${x:,.2f}")
+                st.dataframe(high_cost_cases_display, use_container_width=True)
+                
+                total_top10_cost = high_cost_cases['Relief_Dollars'].sum()
+                total_all_cost = df['Relief_Dollars'].sum()
+                top10_percentage = (total_top10_cost / total_all_cost * 100) if total_all_cost > 0 else 0
+                st.info(f"💡 **Insight:** Top 10 cases represent {top10_percentage:.1f}% of total cost (${total_top10_cost:,.0f})")
+        
+        with tab2:
+            # High-risk pilots
+            pilot_risk_data = []
+            for pilot in df['pilot'].unique():
+                pilot_data = df[df['pilot'] == pilot]
+                case_count = len(pilot_data)
+                if case_count > 1:  # Only multi-case pilots
+                    total_cost = pilot_data['Relief_Dollars'].sum() if 'Relief_Dollars' in pilot_data.columns else 0
+                    avg_cost = total_cost / case_count
+                    open_cases = len(pilot_data[pilot_data['status'].str.lower() == 'open']) if 'status' in pilot_data.columns else 0
+                    
+                    pilot_risk_data.append({
+                        'Pilot': pilot,
+                        'Total Cases': case_count,
+                        'Open Cases': open_cases,
+                        'Total Cost': total_cost,
+                        'Avg Cost per Case': avg_cost,
+                        'Risk Score': case_count * avg_cost  # Simple risk scoring
+                    })
+            
+            if pilot_risk_data:
+                pilot_risk_df = pd.DataFrame(pilot_risk_data)
+                pilot_risk_df = pilot_risk_df.sort_values('Risk Score', ascending=False).head(15)
+                
+                st.dataframe(
+                    pilot_risk_df,
+                    use_container_width=True,
+                    column_config={
+                        'Total Cost': st.column_config.NumberColumn('Total Cost', format="$%.0f"),
+                        'Avg Cost per Case': st.column_config.NumberColumn('Avg Cost per Case', format="$%.0f"),
+                        'Risk Score': st.column_config.NumberColumn('Risk Score', format="%.0f")
+                    }
+                )
+        
+        with tab3:
+            # Cost by subject analysis
+            subject_costs = []
+            for subject in df['subject'].unique():
+                subject_data = df[df['subject'] == subject]
+                case_count = len(subject_data)
+                total_cost = subject_data['Relief_Dollars'].sum() if 'Relief_Dollars' in subject_data.columns else 0
+                avg_cost = total_cost / case_count if case_count > 0 else 0
+                
+                subject_costs.append({
+                    'Subject': subject,
+                    'Cases': case_count,
+                    'Total Cost': total_cost,
+                    'Avg Cost per Case': avg_cost
+                })
+            
+            subject_costs_df = pd.DataFrame(subject_costs)
+            subject_costs_df = subject_costs_df.sort_values('Total Cost', ascending=False)
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                st.dataframe(
+                    subject_costs_df,
+                    use_container_width=True,
+                    column_config={
+                        'Total Cost': st.column_config.NumberColumn('Total Cost', format="$%.0f"),
+                        'Avg Cost per Case': st.column_config.NumberColumn('Avg Cost per Case', format="$%.0f")
+                    }
+                )
+            
+            with col2:
+                # Top subjects by cost
+                top_subjects = subject_costs_df.head(8)
+                fig = px.pie(top_subjects, values='Total Cost', names='Subject',
+                           title="Cost Distribution by Subject (Top 8)")
+                st.plotly_chart(fig, use_container_width=True)
+        
+        # === BUDGET IMPACT ALERTS ===
+        st.subheader("🚨 Budget Impact Alerts")
+        
+        # Calculate key alerts
+        alerts = []
+        
+        # High cost variance alert
+        if abs(variance_pct) > 20:
+            alerts.append({
+                'Type': '💰 Cost Variance',
+                'Severity': 'High' if abs(variance_pct) > 50 else 'Medium',
+                'Message': f"Actual costs are {variance_pct:+.1f}% vs forecasted ({abs(variance):,.0f} difference)",
+                'Action': 'Review forecasting model and budget allocations'
+            })
+        
+        # High approval rate alert
+        if approval_rate > 80:
+            alerts.append({
+                'Type': '✅ High Approval Rate',
+                'Severity': 'Medium',
+                'Message': f"Approval rate is {approval_rate:.1f}% - higher than typical",
+                'Action': 'Review case quality and approval criteria'
+            })
+        
+        # Large open caseload alert
+        if open_cases > total_cases * 0.3:
+            alerts.append({
+                'Type': '📂 Large Open Caseload',
+                'Severity': 'High',
+                'Message': f"{open_cases} open cases ({(open_cases/total_cases*100):.1f}% of total)",
+                'Action': 'Prioritize case processing to reduce backlog'
+            })
+        
+        if alerts:
+            alert_df = pd.DataFrame(alerts)
+            st.dataframe(alert_df, use_container_width=True)
+        else:
+            st.success("✅ No critical alerts at this time")
+        
+    except Exception as e:
+        st.error(f"Error loading executive dashboard: {str(e)}")
 
 def show_comprehensive_analytics_tab():
     """Show comprehensive analytics matching original script detail"""
