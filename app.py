@@ -1174,6 +1174,24 @@ def show_analytics_tab():
         if analytics['top_20_claims']:
             top_claims_df = pd.DataFrame(analytics['top_20_claims'])
             
+            # Add status filter for this table
+            if 'status' in top_claims_df.columns:
+                col1, col2 = st.columns([2, 3])
+                with col1:
+                    status_options = ['All'] + sorted(top_claims_df['status'].dropna().unique().tolist())
+                    selected_status = st.selectbox(
+                        "Filter by Status:",
+                        options=status_options,
+                        index=0,
+                        key="top_claims_status_filter"
+                    )
+                with col2:
+                    if selected_status != 'All':
+                        top_claims_df = top_claims_df[top_claims_df['status'] == selected_status]
+                        st.write(f"Showing {len(top_claims_df)} claims with status: **{selected_status}**")
+                    else:
+                        st.write(f"Showing all {len(top_claims_df)} claims")
+            
             # Display with proper column formatting for sorting
             st.dataframe(
                 top_claims_df, 
@@ -1617,8 +1635,25 @@ def show_analytics_tab():
             outliers = analytics['outlier_analysis']['high_cost_outliers']
             if outliers:
                 outliers_df = pd.DataFrame(outliers)
-                # Display with proper column formatting for sorting (keep numeric values)
                 outliers_display_df = outliers_df[['case_number', 'pilot', 'subject', 'relief_dollars', 'status']].copy()
+                
+                # Add status filter for this table
+                if 'status' in outliers_display_df.columns:
+                    col1, col2 = st.columns([2, 3])
+                    with col1:
+                        status_options = ['All'] + sorted(outliers_display_df['status'].dropna().unique().tolist())
+                        selected_status = st.selectbox(
+                            "Filter by Status:",
+                            options=status_options,
+                            index=0,
+                            key="outliers_status_filter"
+                        )
+                    with col2:
+                        if selected_status != 'All':
+                            outliers_display_df = outliers_display_df[outliers_display_df['status'] == selected_status]
+                            st.write(f"Showing {len(outliers_display_df)} outliers with status: **{selected_status}**")
+                        else:
+                            st.write(f"Showing all {len(outliers_display_df)} outliers")
                 
                 st.dataframe(
                     outliers_display_df, 
