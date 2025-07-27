@@ -151,6 +151,9 @@ def process_relief_data(df, relief_rate=320.47):
     # Always calculate/recalculate relief_dollars with current relief_rate
     df['relief_dollars'] = df['relief_minutes'].apply(lambda x: relief_dollars(x, relief_rate))
     
+    # Create the capitalized version for consistency with existing code
+    df['Relief_Dollars'] = df['relief_dollars']
+    
     # Add HH:MM format column
     df['relief_hhmm'] = df['relief_minutes'].apply(minutes_to_hhmm)
     
@@ -3357,6 +3360,20 @@ def show_executive_dashboard_tab():
         st.warning("No data available for executive dashboard.")
         return
     
+    # Debug information
+    with st.expander("🔍 Debug Info - Data Structure", expanded=False):
+        st.write("**DataFrame Info:**")
+        st.write(f"Shape: {df.shape}")
+        st.write("**Columns:**", list(df.columns))
+        if 'Relief_Dollars' in df.columns:
+            st.write(f"**Relief_Dollars stats:**")
+            st.write(f"- Sum: ${df['Relief_Dollars'].sum():,.2f}")
+            st.write(f"- Mean: ${df['Relief_Dollars'].mean():,.2f}")
+            st.write(f"- Max: ${df['Relief_Dollars'].max():,.2f}")
+        if 'status' in df.columns:
+            st.write("**Status distribution:**")
+            st.write(df['status'].value_counts())
+    
     try:
         relief_rate = st.session_state.get('relief_rate', 320.47)
         analytics = calculate_comprehensive_analytics(df, relief_rate)
@@ -3519,7 +3536,12 @@ def show_executive_dashboard_tab():
                 
                 # Enhanced monthly summary table
                 st.subheader("📊 Monthly Summary Table (Last 12 Months)")
-                st.markdown("*Cases grouped by submission date. Actual costs from approved cases, forecasted costs from pending cases using historical approval rates.*")
+                st.markdown("""
+                *Analysis by case submission month:*
+                - **Actual Cost**: Money spent on approved cases from that submission month
+                - **Forecasted Cost**: Estimated cost if pending cases from that month get approved (based on historical approval rates)
+                - **Total Exposure**: Combined actual + potential costs per submission month
+                """)
                 
                 display_monthly = monthly_df.copy()
                 display_monthly = display_monthly[['Month_Display', 'Cases Submitted', 'Approved Cases', 'Pending Cases', 'Denied Cases', 'Actual Cost', 'Forecasted Cost', 'Total Exposure']]
