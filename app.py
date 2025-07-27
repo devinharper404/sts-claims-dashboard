@@ -4199,14 +4199,20 @@ def show_30_day_lookback_tab():
             high_cost_cases_30d = 0
             high_cost_threshold = 0
         
-        # Cases aging calculation (if we have submission date)
+        # Cases aging calculation - check ALL cases in the dataset, not just 30-day submissions
         aging_cases_30d = 0
-        if 'submission_date' in df_30_days.columns:
+        if 'submission_date' in df.columns:
+            # Convert submission_date in full dataset
+            df_for_aging = df.copy()
+            df_for_aging['submission_date'] = pd.to_datetime(df_for_aging['submission_date'], errors='coerce')
             aging_threshold = current_date - pd.DateOffset(days=30)
-            aging_cases_30d = len(df_30_days[
-                (df_30_days['submission_date'] < aging_threshold) & 
-                (df_30_days['status'].str.lower().isin(['open', 'in review']))
-            ]) if 'status' in df_30_days.columns else 0
+            
+            # Find all open cases (regardless of submission date range) that are older than 30 days
+            aging_cases_30d = len(df_for_aging[
+                (df_for_aging['submission_date'] < aging_threshold) & 
+                (df_for_aging['status'].str.lower().isin(['open', 'in review'])) &
+                (df_for_aging['submission_date'].notna())
+            ]) if 'status' in df_for_aging.columns else 0
         
         col1, col2, col3, col4 = st.columns(4)
         
