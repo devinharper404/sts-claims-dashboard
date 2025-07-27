@@ -2178,30 +2178,70 @@ def show_financial_tab():
                 fig.update_yaxes(tickformat="$,.0f")
                 st.plotly_chart(fig, use_container_width=True)
         
-        # Forecasted cost by subject
+        # Forecasted cost by violation type with tabs
         if cost_data.get('forecasted_cost_by_subject'):
-            st.subheader("🎯 Forecasted Cost by Subject")
+            st.subheader("🎯 Forecasted Cost by Violation Type")
             forecast_data = cost_data['forecasted_cost_by_subject']
+            
             if any(v > 0 for v in forecast_data.values()):
-                forecast_df = pd.DataFrame(list(forecast_data.items()), 
-                                         columns=['Subject', 'Forecasted Cost'])
-                forecast_df = forecast_df[forecast_df['Forecasted Cost'] > 0].sort_values('Forecasted Cost', ascending=False)
+                # Create tabs for raw vs grouped violations
+                tab1, tab2 = st.tabs(["📊 Subject Groups", "📋 Raw Violations"])
                 
-                # Format Forecasted Cost column for display
-                forecast_df_display = forecast_df.copy()
-                forecast_df_display['Forecasted Cost'] = forecast_df_display['Forecasted Cost'].apply(lambda x: f"${x:,.2f}" if pd.notnull(x) else "$0.00")
+                with tab1:
+                    st.write("**Forecasted costs grouped by subject categories**")
+                    
+                    # Group the forecast data by subject categories
+                    grouped_forecast = {}
+                    for subject, cost in forecast_data.items():
+                        if cost > 0:
+                            group = group_subject_key(subject)
+                            if group not in grouped_forecast:
+                                grouped_forecast[group] = 0
+                            grouped_forecast[group] += cost
+                    
+                    if grouped_forecast:
+                        grouped_forecast_df = pd.DataFrame(list(grouped_forecast.items()), 
+                                                         columns=['Subject Group', 'Forecasted Cost'])
+                        grouped_forecast_df = grouped_forecast_df.sort_values('Forecasted Cost', ascending=False)
+                        
+                        # Format for display
+                        grouped_forecast_display_df = grouped_forecast_df.copy()
+                        grouped_forecast_display_df['Forecasted Cost'] = grouped_forecast_display_df['Forecasted Cost'].apply(lambda x: f"${x:,.2f}")
+                        
+                        col1, col2 = st.columns([1, 1])
+                        with col1:
+                            st.dataframe(grouped_forecast_display_df, use_container_width=True)
+                        with col2:
+                            if len(grouped_forecast_df) > 0:
+                                # Use original numeric values for chart
+                                fig = px.bar(grouped_forecast_df.head(8), x='Forecasted Cost', y='Subject Group',
+                                           title="Top Forecasted Costs by Subject Group", orientation='h')
+                                fig.update_xaxes(tickformat="$,.0f")
+                                st.plotly_chart(fig, use_container_width=True)
+                    else:
+                        st.info("No positive grouped forecasted costs to display")
                 
-                col1, col2 = st.columns([1, 1])
-                with col1:
-                    st.dataframe(forecast_df_display, use_container_width=True)
-                with col2:
-                    if len(forecast_df) > 0:
-                        # Use original numeric values for chart
-                        fig = px.bar(forecast_df.head(8), x='Forecasted Cost', y='Subject',
-                                   title="Top Forecasted Costs by Subject", orientation='h')
-                        # Format x-axis to show currency
-                        fig.update_xaxes(tickformat="$,.0f")
-                        st.plotly_chart(fig, use_container_width=True)
+                with tab2:
+                    st.write("**Forecasted costs by individual violation codes**")
+                    
+                    forecast_df = pd.DataFrame(list(forecast_data.items()), 
+                                             columns=['Subject', 'Forecasted Cost'])
+                    forecast_df = forecast_df[forecast_df['Forecasted Cost'] > 0].sort_values('Forecasted Cost', ascending=False)
+                    
+                    # Format Forecasted Cost column for display
+                    forecast_df_display = forecast_df.copy()
+                    forecast_df_display['Forecasted Cost'] = forecast_df_display['Forecasted Cost'].apply(lambda x: f"${x:,.2f}")
+                    
+                    col1, col2 = st.columns([1, 1])
+                    with col1:
+                        st.dataframe(forecast_df_display, use_container_width=True)
+                    with col2:
+                        if len(forecast_df) > 0:
+                            # Use original numeric values for chart
+                            fig = px.bar(forecast_df.head(8), x='Forecasted Cost', y='Subject',
+                                       title="Top Forecasted Costs by Individual Subject", orientation='h')
+                            fig.update_xaxes(tickformat="$,.0f")
+                            st.plotly_chart(fig, use_container_width=True)
             else:
                 st.info("No positive forecasted costs to display")
         
