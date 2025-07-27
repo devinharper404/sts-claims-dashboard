@@ -3331,7 +3331,7 @@ python sts_totalpackage_v2_Version5_Version2.py
                 st.metric("Total Relief Value", f"${df[relief_col].sum():,.2f}")
     
     # Main content tabs
-    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["📈 Overview", "📊 Analytics", "💰 Financial", "📋 Claims Details", "🔍 Comprehensive Analytics", "🏢 Executive Dashboard"])
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs(["📈 Overview", "📊 Analytics", "💰 Financial", "📋 Claims Details", "🔍 Comprehensive Analytics", "🏢 Executive Dashboard", "📅 30-Day Lookback"])
     
     with tab1:
         show_overview_tab()
@@ -4061,6 +4061,310 @@ def show_comprehensive_analytics_tab():
             actual_df = pd.DataFrame(actual_data)
             st.dataframe(actual_df, use_container_width=True)
             st.metric("Total Actual Paid", f"${total_actual:,.2f}")
+
+    with tab7:
+        show_30_day_lookback_tab()
+
+def show_30_day_lookback_tab():
+    """30-Day Lookback - Executive metrics for immediate decision making"""
+    st.header("📅 30-Day Executive Lookback")
+    st.markdown("*Key performance indicators and trends from the last 30 days for immediate decision-making*")
+    
+    df = get_data()
+    if df.empty:
+        st.warning("No data available for 30-day analysis.")
+        return
+    
+    try:
+        # Calculate 30-day date range
+        current_date = pd.Timestamp.now()
+        thirty_days_ago = current_date - pd.DateOffset(days=30)
+        
+        # Filter data for last 30 days
+        if 'submission_date' in df.columns:
+            df['submission_date'] = pd.to_datetime(df['submission_date'], errors='coerce')
+            df_30_days = df[df['submission_date'] >= thirty_days_ago].dropna(subset=['submission_date'])
+        else:
+            st.warning("No submission_date column found. Using all available data.")
+            df_30_days = df
+        
+        if len(df_30_days) == 0:
+            st.warning("No cases found in the last 30 days.")
+            return
+        
+        # Calculate 30-day metrics
+        relief_rate = st.session_state.get('relief_rate', 320.47)
+        
+        # Basic counts
+        total_cases_30d = len(df_30_days)
+        approved_cases_30d = len(df_30_days[df_30_days['status'].str.lower() == 'approved']) if 'status' in df_30_days.columns else 0
+        denied_cases_30d = len(df_30_days[df_30_days['status'].str.lower() == 'denied']) if 'status' in df_30_days.columns else 0
+        open_cases_30d = len(df_30_days[df_30_days['status'].str.lower() == 'open']) if 'status' in df_30_days.columns else 0
+        
+        # Financial metrics
+        approved_df_30d = df_30_days[df_30_days['status'].str.lower() == 'approved'] if 'status' in df_30_days.columns else pd.DataFrame()
+        total_cost_30d = approved_df_30d['Relief_Dollars'].sum() if 'Relief_Dollars' in approved_df_30d.columns and len(approved_df_30d) > 0 else 0
+        avg_cost_per_case_30d = total_cost_30d / approved_cases_30d if approved_cases_30d > 0 else 0
+        
+        # Pending exposure
+        pending_df_30d = df_30_days[df_30_days['status'].str.lower().isin(['open', 'in review'])] if 'status' in df_30_days.columns else pd.DataFrame()
+        pending_exposure_30d = pending_df_30d['Relief_Dollars'].sum() if 'Relief_Dollars' in pending_df_30d.columns and len(pending_df_30d) > 0 else 0
+        
+        # Resolution rate
+        resolved_cases_30d = approved_cases_30d + denied_cases_30d
+        resolution_rate_30d = (resolved_cases_30d / total_cases_30d * 100) if total_cases_30d > 0 else 0
+        approval_rate_30d = (approved_cases_30d / resolved_cases_30d * 100) if resolved_cases_30d > 0 else 0
+        
+        # === OPERATIONAL PERFORMANCE ===
+        st.subheader("📊 Operational Performance (Last 30 Days)")
+        
+        col1, col2, col3, col4 = st.columns(4)
+        
+        with col1:
+            st.metric(
+                "📋 New Cases Submitted",
+                f"{total_cases_30d:,}",
+                f"{total_cases_30d/30:.1f} per day",
+                help="Total cases submitted in last 30 days"
+            )
+        
+        with col2:
+            st.metric(
+                "✅ Cases Resolved",
+                f"{resolved_cases_30d:,}",
+                f"{resolution_rate_30d:.1f}% resolution rate",
+                help="Cases approved or denied (completed)"
+            )
+        
+        with col3:
+            st.metric(
+                "🎯 Approval Rate",
+                f"{approval_rate_30d:.1f}%",
+                f"{approved_cases_30d} of {resolved_cases_30d} resolved",
+                help="Percentage of resolved cases that were approved"
+            )
+        
+        with col4:
+            st.metric(
+                "⏱️ Daily Case Volume",
+                f"{total_cases_30d/30:.1f}",
+                f"cases per day average",
+                help="Average cases submitted per day"
+            )
+        
+        # === FINANCIAL IMPACT ===
+        st.subheader("💰 Financial Impact (Last 30 Days)")
+        
+        col1, col2, col3, col4 = st.columns(4)
+        
+        with col1:
+            st.metric(
+                "💵 Total Cost Approved",
+                f"${total_cost_30d:,.0f}",
+                f"${total_cost_30d/30:,.0f} per day",
+                help="Actual money spent on approved cases"
+            )
+        
+        with col2:
+            st.metric(
+                "📊 Cost per Approved Case",
+                f"${avg_cost_per_case_30d:,.0f}",
+                help="Average cost when cases are approved"
+            )
+        
+        with col3:
+            st.metric(
+                "⚠️ Pending Case Exposure",
+                f"${pending_exposure_30d:,.0f}",
+                f"{len(pending_df_30d)} pending cases",
+                help="Potential cost if all pending cases are approved"
+            )
+        
+        with col4:
+            total_exposure_30d = total_cost_30d + pending_exposure_30d
+            st.metric(
+                "📈 Total Exposure",
+                f"${total_exposure_30d:,.0f}",
+                help="Actual spent + potential pending costs"
+            )
+        
+        # === RISK INDICATORS ===
+        st.subheader("🚨 Risk Indicators (Last 30 Days)")
+        
+        # Calculate high-cost cases threshold (e.g., top 10% or >$10k)
+        if 'Relief_Dollars' in df_30_days.columns and len(df_30_days) > 0:
+            high_cost_threshold = max(df_30_days['Relief_Dollars'].quantile(0.9), 10000)  # 90th percentile or $10k
+            high_cost_cases_30d = len(df_30_days[df_30_days['Relief_Dollars'] > high_cost_threshold])
+        else:
+            high_cost_cases_30d = 0
+            high_cost_threshold = 0
+        
+        # Cases aging calculation (if we have submission date)
+        aging_cases_30d = 0
+        if 'submission_date' in df_30_days.columns:
+            aging_threshold = current_date - pd.DateOffset(days=30)
+            aging_cases_30d = len(df_30_days[
+                (df_30_days['submission_date'] < aging_threshold) & 
+                (df_30_days['status'].str.lower().isin(['open', 'in review']))
+            ]) if 'status' in df_30_days.columns else 0
+        
+        col1, col2, col3, col4 = st.columns(4)
+        
+        with col1:
+            st.metric(
+                "💸 High-Cost Cases",
+                f"{high_cost_cases_30d:,}",
+                f">${high_cost_threshold:,.0f}+ threshold",
+                help="Cases above 90th percentile or $10K"
+            )
+        
+        with col2:
+            st.metric(
+                "⏰ Cases Aging >30 Days",
+                f"{aging_cases_30d:,}",
+                "potential backlog",
+                help="Open cases older than 30 days"
+            )
+        
+        with col3:
+            st.metric(
+                "📂 Current Open Cases",
+                f"{open_cases_30d:,}",
+                f"{(open_cases_30d/total_cases_30d*100):.1f}% of submissions" if total_cases_30d > 0 else "0%",
+                help="Cases still pending decision"
+            )
+        
+        with col4:
+            # Processing velocity (cases resolved per day)
+            processing_velocity = resolved_cases_30d / 30
+            st.metric(
+                "⚡ Processing Velocity",
+                f"{processing_velocity:.1f}",
+                "cases resolved/day",
+                help="Average cases resolved per day"
+            )
+        
+        # === TREND ANALYSIS ===
+        st.subheader("📈 Trend Analysis")
+        
+        if 'submission_date' in df_30_days.columns and len(df_30_days) > 0:
+            # Daily submission trends
+            daily_submissions = df_30_days.groupby(df_30_days['submission_date'].dt.date).size().reset_index()
+            daily_submissions.columns = ['Date', 'Cases']
+            
+            # Daily resolution trends
+            if 'status' in df_30_days.columns:
+                resolved_df = df_30_days[df_30_days['status'].str.lower().isin(['approved', 'denied'])]
+                daily_resolutions = resolved_df.groupby(resolved_df['submission_date'].dt.date).size().reset_index()
+                daily_resolutions.columns = ['Date', 'Resolved']
+            else:
+                daily_resolutions = pd.DataFrame()
+            
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                if len(daily_submissions) > 0:
+                    fig = px.line(daily_submissions, x='Date', y='Cases',
+                                title="Daily Case Submissions (Last 30 Days)",
+                                labels={'Cases': 'Number of Cases'})
+                    fig.update_layout(height=400)
+                    st.plotly_chart(fig, use_container_width=True)
+                else:
+                    st.info("No submission data available for chart")
+            
+            with col2:
+                if len(daily_resolutions) > 0:
+                    fig = px.line(daily_resolutions, x='Date', y='Resolved',
+                                title="Daily Case Resolutions (Last 30 Days)",
+                                labels={'Resolved': 'Number of Cases Resolved'})
+                    fig.update_layout(height=400)
+                    st.plotly_chart(fig, use_container_width=True)
+                else:
+                    st.info("No resolution data available for chart")
+        
+        # === TOP COST SUBJECTS ===
+        st.subheader("🏷️ Top Cost Drivers (Last 30 Days)")
+        
+        if 'subject' in df_30_days.columns and 'Relief_Dollars' in df_30_days.columns:
+            # Subject cost analysis for 30 days
+            subject_costs_30d = df_30_days.groupby('subject')['Relief_Dollars'].agg(['sum', 'count', 'mean']).reset_index()
+            subject_costs_30d.columns = ['Subject', 'Total Cost', 'Cases', 'Avg Cost']
+            subject_costs_30d = subject_costs_30d.sort_values('Total Cost', ascending=False).head(10)
+            
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                st.markdown("**Top 10 Subjects by Cost**")
+                display_subjects = subject_costs_30d.copy()
+                display_subjects['Total Cost'] = display_subjects['Total Cost'].apply(lambda x: f"${x:,.0f}")
+                display_subjects['Avg Cost'] = display_subjects['Avg Cost'].apply(lambda x: f"${x:,.0f}")
+                st.dataframe(display_subjects, use_container_width=True)
+            
+            with col2:
+                if len(subject_costs_30d) > 0 and subject_costs_30d['Total Cost'].sum() > 0:
+                    fig = px.pie(subject_costs_30d.head(8), values='Total Cost', names='Subject',
+                               title="Cost Distribution by Subject (Top 8)")
+                    st.plotly_chart(fig, use_container_width=True)
+                else:
+                    st.info("No cost data available for pie chart")
+        
+        # === ACTIONABLE INSIGHTS ===
+        st.subheader("💡 Actionable Insights")
+        
+        insights = []
+        
+        # Resolution rate insights
+        if resolution_rate_30d < 50:
+            insights.append({
+                'Type': '⚠️ Low Resolution Rate',
+                'Message': f"Only {resolution_rate_30d:.1f}% of cases are being resolved. Consider increasing processing capacity.",
+                'Priority': 'High'
+            })
+        elif resolution_rate_30d > 80:
+            insights.append({
+                'Type': '✅ High Resolution Rate', 
+                'Message': f"Excellent resolution rate of {resolution_rate_30d:.1f}%. Current processing is efficient.",
+                'Priority': 'Good'
+            })
+        
+        # Cost insights
+        if avg_cost_per_case_30d > 0:
+            if total_cost_30d > 100000:  # >$100k in 30 days
+                insights.append({
+                    'Type': '💰 High Cost Impact',
+                    'Message': f"${total_cost_30d:,.0f} spent in 30 days (${total_cost_30d/30:,.0f}/day). Monitor cost trends closely.",
+                    'Priority': 'Medium'
+                })
+        
+        # Backlog insights
+        if aging_cases_30d > 10:
+            insights.append({
+                'Type': '📂 Case Backlog',
+                'Message': f"{aging_cases_30d} cases are aging >30 days. Prioritize older cases to prevent further delays.",
+                'Priority': 'High'
+            })
+        
+        # Processing velocity insights
+        if processing_velocity < 1:
+            insights.append({
+                'Type': '⚡ Low Processing Velocity',
+                'Message': f"Only {processing_velocity:.1f} cases resolved per day. Consider process improvements.",
+                'Priority': 'Medium'
+            })
+        
+        if insights:
+            for insight in insights:
+                if insight['Priority'] == 'High':
+                    st.error(f"**{insight['Type']}**: {insight['Message']}")
+                elif insight['Priority'] == 'Medium':
+                    st.warning(f"**{insight['Type']}**: {insight['Message']}")
+                else:
+                    st.success(f"**{insight['Type']}**: {insight['Message']}")
+        else:
+            st.success("✅ **All metrics look healthy!** No immediate action items identified.")
+        
+    except Exception as e:
+        st.error(f"Error loading 30-day lookback: {str(e)}")
 
 if __name__ == "__main__":
     main()
