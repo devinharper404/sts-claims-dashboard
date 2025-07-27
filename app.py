@@ -3571,17 +3571,34 @@ def show_executive_dashboard_tab():
         tab1, tab2, tab3 = st.tabs(["💸 Highest Cost Cases", "👥 High-Risk Pilots", "📋 Cost by Subject"])
         
         with tab1:
-            # Top cost cases
-            if 'Relief_Dollars' in df.columns:
-                high_cost_cases = df.nlargest(10, 'Relief_Dollars')[['case_number', 'pilot', 'subject', 'Relief_Dollars', 'status']]
-                high_cost_cases_display = high_cost_cases.copy()
-                high_cost_cases_display['Relief_Dollars'] = high_cost_cases_display['Relief_Dollars'].apply(lambda x: f"${x:,.2f}")
-                st.dataframe(high_cost_cases_display, use_container_width=True)
+            # Top cost cases - Open status only
+            if 'Relief_Dollars' in df.columns and 'status' in df.columns:
+                # Filter for open cases only
+                open_cases = df[df['status'].str.lower() == 'open']
                 
-                total_top10_cost = high_cost_cases['Relief_Dollars'].sum()
-                total_all_cost = df['Relief_Dollars'].sum()
-                top10_percentage = (total_top10_cost / total_all_cost * 100) if total_all_cost > 0 else 0
-                st.info(f"💡 **Insight:** Top 10 cases represent {top10_percentage:.1f}% of total cost (${total_top10_cost:,.0f})")
+                if len(open_cases) > 0:
+                    st.markdown("**Top 10 Highest Cost Open Cases**")
+                    st.markdown("*Only showing cases with 'Open' status - these represent current cost exposure*")
+                    
+                    high_cost_cases = open_cases.nlargest(10, 'Relief_Dollars')[['case_number', 'pilot', 'subject', 'Relief_Dollars', 'status']]
+                    high_cost_cases_display = high_cost_cases.copy()
+                    high_cost_cases_display['Relief_Dollars'] = high_cost_cases_display['Relief_Dollars'].apply(lambda x: f"${x:,.2f}")
+                    st.dataframe(high_cost_cases_display, use_container_width=True)
+                    
+                    total_top10_cost = high_cost_cases['Relief_Dollars'].sum()
+                    total_open_cost = open_cases['Relief_Dollars'].sum()
+                    top10_percentage = (total_top10_cost / total_open_cost * 100) if total_open_cost > 0 else 0
+                    st.info(f"💡 **Insight:** Top 10 open cases represent {top10_percentage:.1f}% of total open case cost exposure (${total_top10_cost:,.0f} of ${total_open_cost:,.0f})")
+                    
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        st.metric("📊 Total Open Cases", f"{len(open_cases):,}")
+                    with col2:
+                        st.metric("💰 Total Open Case Exposure", f"${total_open_cost:,.0f}")
+                else:
+                    st.warning("No open cases found in the dataset.")
+            else:
+                st.error("Required columns (Relief_Dollars, status) not found in data.")
         
         with tab2:
             # High-risk pilots
