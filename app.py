@@ -59,7 +59,7 @@ st.markdown("""
 
 # Initialize session state
 if 'demo_mode' not in st.session_state:
-    st.session_state.demo_mode = True
+    st.session_state.demo_mode = False
 if 'data_collected' not in st.session_state:
     st.session_state.data_collected = False
 if 'collected_data' not in st.session_state:
@@ -914,7 +914,7 @@ def get_data():
     """Get the current data from session state, uploaded data, or demo data"""
     relief_rate = st.session_state.get('relief_rate', 320.47)
     
-    if st.session_state.get('demo_mode', True):
+    if st.session_state.get('demo_mode', False):
         # For demo mode, cache the base data and only recalculate relief_dollars
         if 'demo_data_base' not in st.session_state:
             # Generate base demo data once and cache it
@@ -2976,7 +2976,7 @@ def main():
         st.header("🎛️ Dashboard Controls")
         
         # Demo mode toggle
-        demo_mode = st.toggle("Demo Mode", value=st.session_state.get('demo_mode', True))
+        demo_mode = st.toggle("Demo Mode", value=st.session_state.get('demo_mode', False))
         st.session_state.demo_mode = demo_mode
         
         if demo_mode:
