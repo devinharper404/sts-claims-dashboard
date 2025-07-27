@@ -3733,14 +3733,6 @@ def show_executive_dashboard_tab():
                         case_count = len(subject_data)
                         total_cost = subject_data['Relief_Dollars'].sum() if 'Relief_Dollars' in subject_data.columns else 0
                         avg_cost = total_cost / case_count if case_count > 0 else 0
-            
-            subject_group_costs = []
-            for subject in df['subject'].unique():
-                subject_data = df[df['subject'] == subject]
-                grouped_subject = group_subject_key(subject)  # Use the grouping function
-                case_count = len(subject_data)
-                total_cost = subject_data['Relief_Dollars'].sum() if 'Relief_Dollars' in subject_data.columns else 0
-                avg_cost = total_cost / case_count if case_count > 0 else 0
                         
                         subject_group_costs.append({
                             'Subject Group': grouped_subject,
@@ -3798,7 +3790,6 @@ def show_executive_dashboard_tab():
                                 st.dataframe(group_display, use_container_width=True)
                     else:
                         st.warning("No subject group data available for analysis.")
-                        
                 else:
                     st.warning("No open cases found for subject group analysis.")
             else:
