@@ -148,9 +148,8 @@ def process_relief_data(df, relief_rate=320.47):
     # Convert relief_minutes to numeric, handling any non-numeric values
     df['relief_minutes'] = pd.to_numeric(df['relief_minutes'], errors='coerce').fillna(0)
     
-    # Calculate relief_dollars if not present
-    if 'relief_dollars' not in df.columns:
-        df['relief_dollars'] = df['relief_minutes'].apply(lambda x: relief_dollars(x, relief_rate))
+    # Always calculate/recalculate relief_dollars with current relief_rate
+    df['relief_dollars'] = df['relief_minutes'].apply(lambda x: relief_dollars(x, relief_rate))
     
     # Add HH:MM format column
     df['relief_hhmm'] = df['relief_minutes'].apply(minutes_to_hhmm)
@@ -710,27 +709,53 @@ def aging_forecast(df):
         return pd.DataFrame()
 
 def monthly_trends_analysis(df):
-    """Analyze monthly trends in claims data"""
+    """Analyze monthly trends in claims data - last 12 months"""
     try:
         # Convert submission_date to datetime
         df['submission_date'] = pd.to_datetime(df['submission_date'])
-        df['month_year'] = df['submission_date'].dt.to_period('M')
+        
+        # Filter to last 12 months
+        twelve_months_ago = datetime.now() - timedelta(days=365)
+        df_recent = df[df['submission_date'] >= twelve_months_ago].copy()
+        
+        # Create month-year period for grouping
+        df_recent['month_year'] = df_recent['submission_date'].dt.to_period('M')
+        
+        # Get the last 12 months as periods to ensure we have all months
+        current_date = datetime.now()
+        last_12_months = []
+        for i in range(11, -1, -1):  # 11 months ago to current month
+            month_date = current_date.replace(day=1) - timedelta(days=i*30)
+            last_12_months.append(pd.Period(month_date, freq='M'))
         
         # Monthly submission trends
-        monthly_submissions = df.groupby('month_year').size()
+        monthly_submissions = df_recent.groupby('month_year').size()
         
         # Monthly cost trends
-        monthly_costs = df.groupby('month_year')['relief_dollars'].sum()
+        monthly_costs = df_recent.groupby('month_year')['relief_dollars'].sum()
         
         # Monthly approval rates
-        approved_cases = df[df['status'].str.contains('approved|paid', case=False, na=False)]
+        approved_cases = df_recent[df_recent['status'].str.contains('approved|paid', case=False, na=False)]
         monthly_approvals = approved_cases.groupby('month_year').size()
         monthly_approval_rates = (monthly_approvals / monthly_submissions * 100).fillna(0)
         
+        # Fill in missing months with 0 values and format as readable month names
+        submissions_dict = {}
+        costs_dict = {}
+        approval_rates_dict = {}
+        
+        for month_period in last_12_months:
+            month_str = month_period.strftime('%Y-%m')  # Format as YYYY-MM
+            month_display = month_period.strftime('%b %Y')  # Format as "Jan 2024"
+            
+            submissions_dict[month_display] = monthly_submissions.get(month_period, 0)
+            costs_dict[month_display] = monthly_costs.get(month_period, 0)
+            approval_rates_dict[month_display] = monthly_approval_rates.get(month_period, 0)
+        
         return {
-            'submissions_by_month': {str(k): v for k, v in monthly_submissions.to_dict().items()},
-            'cost_by_month': {str(k): v for k, v in monthly_costs.to_dict().items()},
-            'approval_rates_by_month': {str(k): v for k, v in monthly_approval_rates.to_dict().items()}
+            'submissions_by_month': submissions_dict,
+            'cost_by_month': costs_dict,
+            'approval_rates_by_month': approval_rates_dict
         }
     
     except Exception as e:
@@ -758,15 +783,16 @@ def generate_demo_data():
         else:
             pilot = np.random.choice(pilots)
         
-        # Generate realistic financial data
-        relief_amount = np.random.lognormal(6, 1.2) * 100  # Log-normal for realistic money distribution
-        relief_rate = st.session_state.get('relief_rate', 320.47)  # Use current relief rate from session state
-        relief_minutes = (relief_amount / relief_rate) * 60  # Convert back to minutes
+        # Generate realistic relief minutes data (don't calculate dollars here)
+        # Use a base rate to generate consistent relief_minutes that will be recalculated
+        base_relief_amount = np.random.lognormal(6, 1.2) * 100  # Log-normal for realistic money distribution
+        base_rate = 320.47  # Use standard rate for consistent relief_minutes generation
+        relief_minutes = (base_relief_amount / base_rate) * 60  # Convert to minutes
         
         # Weighted status selection for realistic distributions
         status = np.random.choice(statuses, p=status_weights)
         
-        # Generate dates
+        # Generate dates within the last 12 months for realistic monthly trends
         submission_date = datetime.now() - timedelta(days=np.random.randint(1, 365))
         
         # Only generate decision date for approved/denied cases
@@ -792,7 +818,7 @@ def generate_demo_data():
             'subject': subject,
             'status': status,
             'relief_minutes': relief_minutes,
-            'relief_dollars': relief_amount,
+            'relief_dollars': base_relief_amount,
             'relief_hhmm': minutes_to_hhmm(relief_minutes),
             'submission_date': submission_date.strftime('%Y-%m-%d'),
             'decision_date': decision_date.strftime('%Y-%m-%d') if decision_date else '',
@@ -808,28 +834,42 @@ def get_data():
     relief_rate = st.session_state.get('relief_rate', 320.47)
     
     if st.session_state.get('demo_mode', True):
-        return generate_demo_data()
+        # For demo mode, cache the base data and only recalculate relief_dollars
+        if 'demo_data_base' not in st.session_state:
+            # Generate base demo data once and cache it
+            st.session_state['demo_data_base'] = generate_demo_data()
+        
+        # Always recalculate relief_dollars with current relief_rate
+        df = st.session_state['demo_data_base'].copy()
+        return process_relief_data(df, relief_rate)
     else:
         # Check for uploaded data first
         if st.session_state.get('data_source') == 'uploaded' and 'uploaded_data' in st.session_state:
             df = st.session_state['uploaded_data'].copy()
+            # Always recalculate relief_dollars with current relief_rate
             return process_relief_data(df, relief_rate)
         
         # Check for manual data
         elif st.session_state.get('data_source') == 'manual' and 'uploaded_data' in st.session_state:
             df = st.session_state['uploaded_data'].copy()
+            # Always recalculate relief_dollars with current relief_rate
             return process_relief_data(df, relief_rate)
         
         # Check for collected data (from web scraping)
         elif st.session_state.get('data_collected', False) and 'collected_data' in st.session_state:
             df = st.session_state['collected_data'].copy()
+            # Always recalculate relief_dollars with current relief_rate
             return process_relief_data(df, relief_rate)
         
         # Try to load from saved files
         elif os.path.exists('uploaded_claims_data.csv'):
             try:
                 df = pd.read_csv('uploaded_claims_data.csv')
+                # Always recalculate relief_dollars with current relief_rate
                 df = process_relief_data(df, relief_rate)
+                # Store raw data without relief_dollars for future recalculation
+                if 'uploaded_data_raw' not in st.session_state:
+                    st.session_state['uploaded_data_raw'] = df.copy()
                 st.session_state['uploaded_data'] = df
                 st.session_state['data_source'] = 'uploaded'
                 return df
@@ -839,7 +879,11 @@ def get_data():
         elif os.path.exists('manual_claims_data.csv'):
             try:
                 df = pd.read_csv('manual_claims_data.csv')
+                # Always recalculate relief_dollars with current relief_rate
                 df = process_relief_data(df, relief_rate)
+                # Store raw data without relief_dollars for future recalculation
+                if 'uploaded_data_raw' not in st.session_state:
+                    st.session_state['uploaded_data_raw'] = df.copy()
                 st.session_state['uploaded_data'] = df
                 st.session_state['data_source'] = 'manual'
                 return df
@@ -1113,15 +1157,23 @@ def show_analytics_tab():
                                                columns=['Pilot', f'Relief ({status.title()})'])
                         status_df = status_df.sort_values(f'Relief ({status.title()})', ascending=False)
                         
+                        # Format the relief column for display
+                        status_df_display = status_df.copy()
+                        relief_col = f'Relief ({status.title()})'
+                        status_df_display[relief_col] = status_df_display[relief_col].apply(lambda x: f"${x:,.2f}")
+                        
                         col1, col2 = st.columns([1, 1])
                         with col1:
-                            st.dataframe(status_df, use_container_width=True)
+                            st.dataframe(status_df_display, use_container_width=True)
                         with col2:
                             if len(status_df) > 0:
+                                # Use original numeric values for chart
                                 fig = px.bar(status_df.head(10), 
                                            x=f'Relief ({status.title()})', y='Pilot',
                                            title=f"Top 10 Pilots - {status.title()}", 
                                            orientation='h')
+                                # Format x-axis to show currency
+                                fig.update_xaxes(tickformat="$,.0f")
                                 st.plotly_chart(fig, use_container_width=True)
                     else:
                         st.info(f"No data available for {status} status")
@@ -1229,7 +1281,7 @@ def show_analytics_tab():
                 row = {
                     'Subject': subject,
                     'Total Cases': stats['count'],
-                    'Total Relief ($)': stats['minutes'],
+                    'Total Relief ($)': stats['minutes'],  # This will be formatted below
                     '% of Total Cases': round((stats['count'] / analytics.get('total_claims', 1)) * 100, 2)
                 }
                 
@@ -1251,8 +1303,12 @@ def show_analytics_tab():
             subject_df = pd.DataFrame(subject_summary)
             subject_df = subject_df.sort_values('Total Relief ($)', ascending=False)
             
+            # Format the Total Relief ($) column for display
+            subject_df_display = subject_df.copy()
+            subject_df_display['Total Relief ($)'] = subject_df_display['Total Relief ($)'].apply(lambda x: f"${x:,.2f}")
+            
             # Display comprehensive table
-            st.dataframe(subject_df, use_container_width=True, height=400)
+            st.dataframe(subject_df_display, use_container_width=True, height=400)
             
             # Create two visualizations side by side
             col1, col2 = st.columns(2)
@@ -1386,9 +1442,11 @@ def show_analytics_tab():
                 months = list(monthly_data['cost_by_month'].keys())
                 costs = list(monthly_data['cost_by_month'].values())
                 
-                fig = px.line(x=months, y=costs, title="Monthly Cost Trends",
+                fig = px.line(x=months, y=costs, title="Monthly Cost Trends (Last 12 Months)",
                              labels={'x': 'Month', 'y': 'Total Cost ($)'})
                 fig.update_xaxes(tickangle=45)
+                # Format y-axis to show currency
+                fig.update_yaxes(tickformat="$,.0f")
                 st.plotly_chart(fig, use_container_width=True)
         
         # Top 20 Pilots by Cases Submitted (Detailed View)
@@ -1399,11 +1457,16 @@ def show_analytics_tab():
             pilot_detailed = []
             for pilot, case_count in analytics['top_20_pilots_by_cases'].items():
                 pilot_data = df[df['pilot'] == pilot]
+                
+                # Use relief_dollars column (lowercase) as that's what get_data() creates
+                total_relief = pilot_data['relief_dollars'].sum() if 'relief_dollars' in pilot_data.columns else 0
+                avg_relief = pilot_data['relief_dollars'].mean() if 'relief_dollars' in pilot_data.columns else 0
+                
                 pilot_detailed.append({
                     'Pilot': pilot,
                     'Total Cases': case_count,
-                    'Total Relief ($)': pilot_data['Relief_Dollars'].sum(),
-                    'Avg Relief ($)': pilot_data['Relief_Dollars'].mean(),
+                    'Total Relief ($)': total_relief,
+                    'Avg Relief ($)': avg_relief,
                     'Approved Cases': len(pilot_data[pilot_data['Status_Canonical'] == 'approved']),
                     'Denied Cases': len(pilot_data[pilot_data['Status_Canonical'] == 'denied']),
                     'Open Cases': len(pilot_data[pilot_data['Status_Canonical'] == 'open']),
@@ -2253,6 +2316,11 @@ def main():
         
         if demo_mode:
             st.info("📊 **Demo Mode Active**\n\nUsing sample data for demonstration.")
+            # Add button to regenerate demo data
+            if st.button("🔄 Regenerate Demo Data", help="Generate new random demo data"):
+                if 'demo_data_base' in st.session_state:
+                    del st.session_state['demo_data_base']  # Clear cached demo data
+                st.rerun()
         else:
             st.info("🔴 **Production Mode**\n\nReady for live data collection.")
         
@@ -2298,6 +2366,7 @@ def main():
         if relief_rate != st.session_state.relief_rate:
             st.session_state.relief_rate = relief_rate
             st.success(f"Relief rate updated to ${relief_rate:.2f}/hour")
+            st.rerun()  # Force a rerun when relief rate changes
         
         # Reset button for relief rate
         col1, col2 = st.columns(2)
