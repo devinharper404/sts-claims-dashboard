@@ -1056,174 +1056,6 @@ def show_overview_tab():
                         title="Claims by Status")
             st.plotly_chart(fig, use_container_width=True)
         
-        # === COMPREHENSIVE MULTIPLE CASE EMPLOYEES ANALYSIS ===
-        if analytics['pilots_multiple_submissions'] or analytics['multiple_case_employees']:
-            st.subheader("👥 Multiple Case Employees Analysis")
-            
-            # Create tabs for different analysis views
-            tab1, tab2, tab3, tab4 = st.tabs([
-                "📊 Overview", 
-                "🔍 Detailed Analysis", 
-                "📈 Percentage Breakdown", 
-                "📊 Statistical Analysis"
-            ])
-            
-            with tab1:
-                # Summary metrics
-                multi_employees = analytics['multiple_case_employees']
-                total_cases = len(df)
-                total_pilots = len(df['pilot'].unique())
-                
-                col1, col2, col3, col4 = st.columns(4)
-                with col1:
-                    pilots_with_multiple = len(multi_employees)
-                    st.metric("Pilots with Multiple Cases", pilots_with_multiple)
-                with col2:
-                    total_multi_cases = sum(details['case_count'] for details in multi_employees.values())
-                    multi_case_percentage = (total_multi_cases / total_cases * 100) if total_cases > 0 else 0
-                    st.metric("Total Cases (Multi-Case Pilots)", f"{total_multi_cases} ({multi_case_percentage:.1f}%)")
-                with col3:
-                    total_multi_relief = sum(details['total_relief'] for details in multi_employees.values())
-                    st.metric("Total Relief (Multi-Case)", f"${total_multi_relief:,.0f}")
-                with col4:
-                    avg_cases_per_pilot = total_multi_cases / len(multi_employees) if multi_employees else 0
-                    st.metric("Avg Cases per Multi-Case Pilot", f"{avg_cases_per_pilot:.1f}")
-                
-                # Basic table view with pilots who have multiple submissions
-                if analytics['pilots_multiple_submissions']:
-                    st.subheader("All Pilots with Multiple Submissions")
-                    pilots_multi_df = pd.DataFrame(list(analytics['pilots_multiple_submissions'].items()), 
-                                                 columns=['Pilot', 'Number of Cases'])
-                    pilots_multi_df = pilots_multi_df.sort_values('Number of Cases', ascending=False)
-                    
-                    col1, col2 = st.columns([1, 1])
-                    with col1:
-                        st.dataframe(pilots_multi_df, use_container_width=True)
-                    with col2:
-                        fig = px.bar(pilots_multi_df.head(10), x='Pilot', y='Number of Cases',
-                                   title="Top 10 Pilots by Number of Cases")
-                        fig.update_xaxes(tickangle=45)
-                        st.plotly_chart(fig, use_container_width=True)
-            
-            with tab2:
-                # Detailed breakdown table with relief amounts
-                multi_detail = []
-                for pilot, details in multi_employees.items():
-                    multi_detail.append({
-                        'Pilot': pilot,
-                        'Number of Cases': details['case_count'],
-                        'Total Relief ($)': details['total_relief'],
-                        'Average Relief ($)': details['avg_relief'],
-                        'Subject Categories': len(details['subjects']),
-                        'Status Types': len(details['statuses']),
-                        'All Subjects': ', '.join(details['subjects']),
-                        'Status Distribution': ', '.join(details['statuses'])
-                    })
-                
-                multi_detail_df = pd.DataFrame(multi_detail)
-                multi_detail_df = multi_detail_df.sort_values('Number of Cases', ascending=False)
-                
-                st.dataframe(
-                    multi_detail_df, 
-                    use_container_width=True,
-                    column_config={
-                        'Total Relief ($)': st.column_config.NumberColumn(
-                            'Total Relief ($)',
-                            format="$%.2f"
-                        ),
-                        'Average Relief ($)': st.column_config.NumberColumn(
-                            'Average Relief ($)',
-                            format="$%.2f"
-                        )
-                    }
-                )
-            
-            with tab3:
-                # Percentage breakdowns
-                st.subheader("Caseload Percentage Analysis")
-                
-                # Overall percentage metrics
-                col1, col2, col3 = st.columns(3)
-                with col1:
-                    pilot_percentage = (pilots_with_multiple / total_pilots * 100) if total_pilots > 0 else 0
-                    st.metric("% of Pilots with Multiple Cases", f"{pilot_percentage:.2f}%")
-                with col2:
-                    case_percentage = (total_multi_cases / total_cases * 100) if total_cases > 0 else 0
-                    st.metric("% of Total Cases from Multi-Case Pilots", f"{case_percentage:.2f}%")
-                with col3:
-                    total_relief = df['Relief_Dollars'].sum() if 'Relief_Dollars' in df.columns else 0
-                    relief_percentage = (total_multi_relief / total_relief * 100) if total_relief > 0 else 0
-                    st.metric("% of Total Relief from Multi-Case Pilots", f"{relief_percentage:.2f}%")
-                
-                # Percentage breakdown by employee and status
-                st.subheader("Caseload Percentage by Employee and Status")
-                
-                employee_status_data = []
-                for pilot, details in multi_employees.items():
-                    pilot_cases = details['case_count']
-                    pilot_percentage = (pilot_cases / total_cases * 100) if total_cases > 0 else 0
-                    
-                    # Get status breakdown for this pilot
-                    pilot_df = df[df['pilot'] == pilot]
-                    status_breakdown = []
-                    for status in pilot_df['status'].unique():
-                        status_count = len(pilot_df[pilot_df['status'] == status])
-                        status_pct = (status_count / pilot_cases * 100) if pilot_cases > 0 else 0
-                        status_breakdown.append(f"{status}: {status_count} ({status_pct:.1f}%)")
-                    
-                    employee_status_data.append({
-                        'Pilot': pilot,
-                        'Total Cases': pilot_cases,
-                        '% of Total Caseload': f"{pilot_percentage:.2f}%",
-                        'Status Breakdown': '; '.join(status_breakdown)
-                    })
-                
-                employee_status_df = pd.DataFrame(employee_status_data)
-                employee_status_df = employee_status_df.sort_values('Total Cases', ascending=False)
-                st.dataframe(employee_status_df, use_container_width=True)
-            
-            with tab4:
-                # Charts and statistical analysis
-                col1, col2 = st.columns(2)
-                with col1:
-                    # Distribution of case counts
-                    case_counts = [details['case_count'] for details in multi_employees.values()]
-                    case_dist_counts = pd.Series(case_counts).value_counts().sort_index()
-                    fig = px.bar(x=case_dist_counts.index, y=case_dist_counts.values,
-                               title="Distribution of Case Counts",
-                               labels={'x': 'Number of Cases', 'y': 'Number of Pilots'})
-                    st.plotly_chart(fig, use_container_width=True)
-                
-                with col2:
-                    # Scatter plot: Cases vs Relief
-                    case_dist = pd.DataFrame(list(analytics['multiple_case_employees'].items()))
-                    case_dist.columns = ['Pilot', 'Details']
-                    case_dist['Cases'] = case_dist['Details'].apply(lambda x: x['case_count'])
-                    case_dist['Relief'] = case_dist['Details'].apply(lambda x: x['total_relief'])
-                    
-                    fig = px.scatter(case_dist, x='Cases', y='Relief', 
-                                   hover_data=['Pilot'],
-                                   title="Cases vs Relief Amount",
-                                   labels={'Cases': 'Number of Cases', 'Relief': 'Total Relief ($)'})
-                    st.plotly_chart(fig, use_container_width=True)
-        
-        # Top 20 Pilots by Cases Submitted
-        if analytics['top_20_pilots_by_cases']:
-            st.subheader("Top 20 Pilots by Cases Submitted")
-            top_pilots_df = pd.DataFrame(list(analytics['top_20_pilots_by_cases'].items()), 
-                                       columns=['Pilot', 'Cases Submitted'])
-            top_pilots_df = top_pilots_df.sort_values('Cases Submitted', ascending=False)
-            
-            col1, col2 = st.columns([1, 1])
-            with col1:
-                st.dataframe(top_pilots_df, use_container_width=True, height=400)
-            with col2:
-                fig = px.bar(top_pilots_df.head(15), x='Cases Submitted', y='Pilot',
-                           title="Top 15 Pilots by Cases Submitted",
-                           orientation='h')
-                fig.update_layout(height=400)
-                st.plotly_chart(fig, use_container_width=True)
-        
         # ===== TOTAL RELIEF REQUESTED BY SUBJECT OVERVIEW =====
         st.subheader("💰 Total Relief Requested - Overview")
         if analytics.get('subject_relief_sorted'):
@@ -1263,20 +1095,62 @@ def show_overview_tab():
             with tab2:
                 # Relief requested by status
                 status_relief_data = []
-                for status in analytics.get('all_statuses', []):
-                    status_cases = df[df['status'].str.lower() == status.lower()]
+                
+                # Use the status canonical column and relief dollars
+                if 'Status_Canonical' in df.columns:
+                    status_col = 'Status_Canonical'
+                elif 'status' in df.columns:
+                    status_col = 'status'
+                else:
+                    st.error("No status column found")
+                    return
+                
+                # Check for relief column
+                relief_col = None
+                for col in ['Relief_Dollars', 'relief_dollars', 'Relief_Minutes', 'relief_minutes']:
+                    if col in df.columns:
+                        relief_col = col
+                        break
+                
+                if relief_col is None:
+                    st.error("No relief column found")
+                    return
+                
+                # Get unique statuses
+                unique_statuses = df[status_col].dropna().unique()
+                
+                for status in unique_statuses:
+                    status_cases = df[df[status_col] == status]
                     if len(status_cases) > 0:
-                        total_relief_dollars = status_cases['Relief_Dollars'].sum() if 'Relief_Dollars' in status_cases.columns else 0
-                        total_relief_hours = total_relief_dollars / relief_rate
                         case_count = len(status_cases)
+                        
+                        # Calculate relief based on column type
+                        if 'Dollar' in relief_col or 'dollar' in relief_col:
+                            total_relief_dollars = status_cases[relief_col].sum()
+                            total_relief_hours = total_relief_dollars / relief_rate
+                        elif 'Minutes' in relief_col or 'minutes' in relief_col:
+                            total_relief_minutes = status_cases[relief_col].sum()
+                            total_relief_hours = total_relief_minutes / 60
+                            total_relief_dollars = total_relief_hours * relief_rate
+                        else:
+                            total_relief_dollars = status_cases[relief_col].sum()
+                            total_relief_hours = total_relief_dollars / relief_rate
+                        
                         avg_relief = total_relief_dollars / case_count if case_count > 0 else 0
                         
                         # Calculate percentage of total relief
-                        total_all_relief = df['Relief_Dollars'].sum() if 'Relief_Dollars' in df.columns else 0
+                        if 'Dollar' in relief_col or 'dollar' in relief_col:
+                            total_all_relief = df[relief_col].sum()
+                        elif 'Minutes' in relief_col or 'minutes' in relief_col:
+                            total_all_minutes = df[relief_col].sum()
+                            total_all_relief = (total_all_minutes / 60) * relief_rate
+                        else:
+                            total_all_relief = df[relief_col].sum()
+                            
                         percentage = (total_relief_dollars / total_all_relief * 100) if total_all_relief > 0 else 0
                         
                         status_relief_data.append({
-                            'Status': status.title(),
+                            'Status': str(status).title(),
                             'Cases': case_count,
                             'Total Relief ($)': total_relief_dollars,
                             'Total Relief Hours': round(total_relief_hours, 2),
@@ -1291,12 +1165,25 @@ def show_overview_tab():
                 if not status_relief_df.empty:
                     col1, col2 = st.columns([1, 1])
                     with col1:
-                        # Format for display
-                        display_status_df = status_relief_df.copy()
-                        display_status_df['Total Relief ($)'] = display_status_df['Total Relief ($)'].apply(lambda x: f"${x:,.2f}")
-                        display_status_df['Avg Relief per Case'] = display_status_df['Avg Relief per Case'].apply(lambda x: f"${x:,.2f}")
-                        display_status_df['% of Total Relief'] = display_status_df['% of Total Relief'].apply(lambda x: f"{x}%")
-                        st.dataframe(display_status_df, use_container_width=True)
+                        # Display with proper formatting
+                        st.dataframe(
+                            status_relief_df, 
+                            use_container_width=True,
+                            column_config={
+                                'Total Relief ($)': st.column_config.NumberColumn(
+                                    'Total Relief ($)',
+                                    format="$%.2f"
+                                ),
+                                'Avg Relief per Case': st.column_config.NumberColumn(
+                                    'Avg Relief per Case',
+                                    format="$%.2f"
+                                ),
+                                '% of Total Relief': st.column_config.NumberColumn(
+                                    '% of Total Relief',
+                                    format="%.2f%%"
+                                )
+                            }
+                        )
                     with col2:
                         # Pie chart of relief by status
                         fig = px.pie(status_relief_df, values='Total Relief ($)', names='Status',
@@ -1624,6 +1511,157 @@ def show_analytics_tab():
             st.metric("% Cases from Multi-Case Employees", f"{analytics.get('percentage_multiple_cases', 0):.1f}%")
         with col4:
             st.metric("Total Cases", analytics.get('total_claims', 0))
+        
+        # === COMPREHENSIVE MULTIPLE CASE EMPLOYEES ANALYSIS ===
+        if analytics['pilots_multiple_submissions'] or analytics['multiple_case_employees']:
+            st.subheader("👥 Multiple Case Employees Analysis")
+            
+            # Create tabs for different analysis views
+            tab1, tab2, tab3, tab4 = st.tabs([
+                "📊 Overview", 
+                "🔍 Detailed Analysis", 
+                "📈 Percentage Breakdown", 
+                "📊 Statistical Analysis"
+            ])
+            
+            with tab1:
+                # Summary metrics
+                multi_employees = analytics['multiple_case_employees']
+                total_cases = len(df)
+                total_pilots = len(df['pilot'].unique())
+                
+                col1, col2, col3, col4 = st.columns(4)
+                with col1:
+                    pilots_with_multiple = len(multi_employees)
+                    st.metric("Pilots with Multiple Cases", pilots_with_multiple)
+                with col2:
+                    total_multi_cases = sum(details['case_count'] for details in multi_employees.values())
+                    multi_case_percentage = (total_multi_cases / total_cases * 100) if total_cases > 0 else 0
+                    st.metric("Total Cases (Multi-Case Pilots)", f"{total_multi_cases} ({multi_case_percentage:.1f}%)")
+                with col3:
+                    total_multi_relief = sum(details['total_relief'] for details in multi_employees.values())
+                    st.metric("Total Relief (Multi-Case)", f"${total_multi_relief:,.0f}")
+                with col4:
+                    avg_cases_per_pilot = total_multi_cases / len(multi_employees) if multi_employees else 0
+                    st.metric("Avg Cases per Multi-Case Pilot", f"{avg_cases_per_pilot:.1f}")
+                
+                # Basic table view with pilots who have multiple submissions
+                if analytics['pilots_multiple_submissions']:
+                    st.subheader("All Pilots with Multiple Submissions")
+                    pilots_multi_df = pd.DataFrame(list(analytics['pilots_multiple_submissions'].items()), 
+                                                 columns=['Pilot', 'Number of Cases'])
+                    pilots_multi_df = pilots_multi_df.sort_values('Number of Cases', ascending=False)
+                    
+                    col1, col2 = st.columns([1, 1])
+                    with col1:
+                        st.dataframe(pilots_multi_df, use_container_width=True)
+                    with col2:
+                        fig = px.bar(pilots_multi_df.head(10), x='Pilot', y='Number of Cases',
+                                   title="Top 10 Pilots by Number of Cases")
+                        fig.update_xaxes(tickangle=45)
+                        st.plotly_chart(fig, use_container_width=True)
+            
+            with tab2:
+                # Detailed breakdown table with relief amounts
+                multi_detail = []
+                for pilot, details in multi_employees.items():
+                    multi_detail.append({
+                        'Pilot': pilot,
+                        'Number of Cases': details['case_count'],
+                        'Total Relief ($)': details['total_relief'],
+                        'Average Relief ($)': details['avg_relief'],
+                        'Subject Categories': len(details['subjects']),
+                        'Status Types': len(details['statuses']),
+                        'All Subjects': ', '.join(details['subjects']),
+                        'Status Distribution': ', '.join(details['statuses'])
+                    })
+                
+                multi_detail_df = pd.DataFrame(multi_detail)
+                multi_detail_df = multi_detail_df.sort_values('Number of Cases', ascending=False)
+                
+                st.dataframe(
+                    multi_detail_df, 
+                    use_container_width=True,
+                    column_config={
+                        'Total Relief ($)': st.column_config.NumberColumn(
+                            'Total Relief ($)',
+                            format="$%.2f"
+                        ),
+                        'Average Relief ($)': st.column_config.NumberColumn(
+                            'Average Relief ($)',
+                            format="$%.2f"
+                        )
+                    }
+                )
+            
+            with tab3:
+                # Percentage breakdowns
+                st.subheader("Caseload Percentage Analysis")
+                
+                # Overall percentage metrics
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    pilot_percentage = (pilots_with_multiple / total_pilots * 100) if total_pilots > 0 else 0
+                    st.metric("% of Pilots with Multiple Cases", f"{pilot_percentage:.2f}%")
+                with col2:
+                    case_percentage = (total_multi_cases / total_cases * 100) if total_cases > 0 else 0
+                    st.metric("% of Total Cases from Multi-Case Pilots", f"{case_percentage:.2f}%")
+                with col3:
+                    total_relief = df['Relief_Dollars'].sum() if 'Relief_Dollars' in df.columns else 0
+                    relief_percentage = (total_multi_relief / total_relief * 100) if total_relief > 0 else 0
+                    st.metric("% of Total Relief from Multi-Case Pilots", f"{relief_percentage:.2f}%")
+                
+                # Percentage breakdown by employee and status
+                st.subheader("Caseload Percentage by Employee and Status")
+                
+                employee_status_data = []
+                for pilot, details in multi_employees.items():
+                    pilot_cases = details['case_count']
+                    pilot_percentage = (pilot_cases / total_cases * 100) if total_cases > 0 else 0
+                    
+                    # Get status breakdown for this pilot
+                    pilot_df = df[df['pilot'] == pilot]
+                    status_breakdown = []
+                    for status in pilot_df['status'].unique():
+                        status_count = len(pilot_df[pilot_df['status'] == status])
+                        status_pct = (status_count / pilot_cases * 100) if pilot_cases > 0 else 0
+                        status_breakdown.append(f"{status}: {status_count} ({status_pct:.1f}%)")
+                    
+                    employee_status_data.append({
+                        'Pilot': pilot,
+                        'Total Cases': pilot_cases,
+                        '% of Total Caseload': f"{pilot_percentage:.2f}%",
+                        'Status Breakdown': '; '.join(status_breakdown)
+                    })
+                
+                employee_status_df = pd.DataFrame(employee_status_data)
+                employee_status_df = employee_status_df.sort_values('Total Cases', ascending=False)
+                st.dataframe(employee_status_df, use_container_width=True)
+            
+            with tab4:
+                # Charts and statistical analysis
+                col1, col2 = st.columns(2)
+                with col1:
+                    # Distribution of case counts
+                    case_counts = [details['case_count'] for details in multi_employees.values()]
+                    case_dist_counts = pd.Series(case_counts).value_counts().sort_index()
+                    fig = px.bar(x=case_dist_counts.index, y=case_dist_counts.values,
+                               title="Distribution of Case Counts",
+                               labels={'x': 'Number of Cases', 'y': 'Number of Pilots'})
+                    st.plotly_chart(fig, use_container_width=True)
+                
+                with col2:
+                    # Scatter plot: Cases vs Relief
+                    case_dist = pd.DataFrame(list(analytics['multiple_case_employees'].items()))
+                    case_dist.columns = ['Pilot', 'Details']
+                    case_dist['Cases'] = case_dist['Details'].apply(lambda x: x['case_count'])
+                    case_dist['Relief'] = case_dist['Details'].apply(lambda x: x['total_relief'])
+                    
+                    fig = px.scatter(case_dist, x='Cases', y='Relief', 
+                                   hover_data=['Pilot'],
+                                   title="Cases vs Relief Amount",
+                                   labels={'Cases': 'Number of Cases', 'Relief': 'Total Relief ($)'})
+                    st.plotly_chart(fig, use_container_width=True)
         
         # ===== TOP 10 PILOTS BY CASE COUNT =====
         if analytics.get('top_10_pilots_by_cases'):
