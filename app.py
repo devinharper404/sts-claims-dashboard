@@ -1363,7 +1363,7 @@ def show_analytics_tab():
         
         # Top 20 Pilots by Relief Amount per Status
         if analytics.get('top20_pilots_by_status'):
-            st.subheader("🏅 Top 20 Pilots by Relief Amount - By Status")
+            st.subheader("Top 20 Pilots by Relief Amount - By Status")
             
             # Create tabs for each status
             status_tabs = st.tabs([status.title() for status in analytics['top20_pilots_by_status'].keys()])
@@ -2314,7 +2314,7 @@ def show_financial_tab():
         
         # Forecasted cost by violation type with tabs
         if cost_data.get('forecasted_cost_by_subject'):
-            st.subheader("🎯 Forecasted Cost by Violation Type")
+            st.subheader("Forecasted Cost by Violation Type")
             forecast_data = cost_data['forecasted_cost_by_subject']
             
             if any(v > 0 for v in forecast_data.values()):
@@ -2394,7 +2394,7 @@ def show_financial_tab():
         
         # Top 20 Forecasted by Pilot
         if cost_data.get('top20_forecasted_by_pilot'):
-            st.subheader("🚀 Top 20 Forecasted Cost by Pilot")
+            st.subheader("Top 20 Forecasted Cost by Pilot")
             forecast_pilots = cost_data['top20_forecasted_by_pilot']
             if forecast_pilots:
                 forecast_pilots_df = pd.DataFrame(forecast_pilots, columns=['Pilot', 'Forecasted Cost'])
