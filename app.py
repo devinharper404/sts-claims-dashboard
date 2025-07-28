@@ -4487,7 +4487,9 @@ def show_impasse_analysis_tab():
                     
                     monthly_impasse = impasse_df.groupby('month_year').agg(agg_dict).reset_index()
                     
-                    monthly_impasse['month_year_str'] = monthly_impasse['month_year'].astype(str)
+                    # Convert month_year to a more readable format
+                    monthly_impasse['month_year_date'] = monthly_impasse['month_year'].dt.to_timestamp()
+                    monthly_impasse['month_year_str'] = monthly_impasse['month_year_date'].dt.strftime('%b %Y')  # e.g., "Jan 2023"
                     
                     # Add relief_dollars if relief_minutes exists
                     if 'relief_minutes' in monthly_impasse.columns:
@@ -4499,7 +4501,8 @@ def show_impasse_analysis_tab():
                     df_with_groups[available_date_col] = pd.to_datetime(df_with_groups[available_date_col], errors='coerce')
                     df_with_groups['month_year'] = df_with_groups[available_date_col].dt.to_period('M')
                     monthly_total = df_with_groups.groupby('month_year').size().reset_index(name='total_cases')
-                    monthly_total['month_year_str'] = monthly_total['month_year'].astype(str)
+                    monthly_total['month_year_date'] = monthly_total['month_year'].dt.to_timestamp()
+                    monthly_total['month_year_str'] = monthly_total['month_year_date'].dt.strftime('%b %Y')
                     
                     # Merge for impasse rate calculation
                     monthly_trends = pd.merge(monthly_total, monthly_impasse, on='month_year_str', how='left')
@@ -4512,26 +4515,26 @@ def show_impasse_analysis_tab():
                         with col1:
                             # Monthly impasse case count
                             fig = px.line(monthly_impasse, x='month_year_str', y='case_number',
-                                        title="Monthly Impasse Cases",
-                                        labels={'case_number': 'Number of Cases', 'month_year_str': 'Month'})
-                            fig.update_xaxes(tickangle=45)
+                                        title="Impasse Cases Over Time",
+                                        labels={'case_number': 'Number of Cases', 'month_year_str': 'Month-Year'})
+                            fig.update_xaxes(tickangle=45, title="Month-Year")
                             st.plotly_chart(fig, use_container_width=True)
                         
                         with col2:
                             # Monthly impasse rate
                             fig = px.line(monthly_trends, x='month_year_str', y='impasse_rate',
-                                        title="Monthly Impasse Rate (%)",
-                                        labels={'impasse_rate': 'Impasse Rate (%)', 'month_year_str': 'Month'})
-                            fig.update_xaxes(tickangle=45)
+                                        title="Impasse Rate Over Time",
+                                        labels={'impasse_rate': 'Impasse Rate (%)', 'month_year_str': 'Month-Year'})
+                            fig.update_xaxes(tickangle=45, title="Month-Year")
                             st.plotly_chart(fig, use_container_width=True)
                         
                         # Relief trends (only show if relief data is available)
                         if 'relief_dollars' in monthly_impasse.columns and monthly_impasse['relief_dollars'].sum() > 0:
                             st.subheader("Relief Value Trends")
                             fig = px.line(monthly_impasse, x='month_year_str', y='relief_dollars',
-                                        title="Monthly Impasse Relief Value",
-                                        labels={'relief_dollars': 'Relief Value ($)', 'month_year_str': 'Month'})
-                            fig.update_xaxes(tickangle=45)
+                                        title="Impasse Relief Value Over Time",
+                                        labels={'relief_dollars': 'Relief Value ($)', 'month_year_str': 'Month-Year'})
+                            fig.update_xaxes(tickangle=45, title="Month-Year")
                             fig.update_yaxes(tickformat="$,.0f")
                             st.plotly_chart(fig, use_container_width=True)
                     else:
