@@ -3716,6 +3716,31 @@ def show_executive_dashboard_tab():
                 pilot_risk_df = pd.DataFrame(pilot_risk_data)
                 pilot_risk_df = pilot_risk_df.sort_values('Risk Score', ascending=False).head(15)
                 
+                # Add explanation of Risk Score
+                with st.expander("ℹ️ Risk Score Methodology", expanded=False):
+                    st.markdown("""
+                    **Risk Score Calculation (0-100 scale):**
+                    
+                    The Risk Score combines multiple factors to identify pilots requiring attention:
+                    
+                    📊 **Case Frequency (0-30 points)**
+                    - 10+ cases = 30 pts | 7-9 cases = 25 pts | 5-6 cases = 20 pts | 3-4 cases = 15 pts | 1-2 cases = 10 pts
+                    
+                    💰 **Average Cost per Case (0-25 points)** 
+                    - $2,000+ = 25 pts | $1,500-$1,999 = 20 pts | $1,000-$1,499 = 15 pts | $500-$999 = 10 pts | <$500 = 5 pts
+                    
+                    ⏳ **Open Cases Ratio (0-25 points)**
+                    - 80%+ open = 25 pts | 60-79% = 20 pts | 40-59% = 15 pts | 20-39% = 10 pts | <20% = 5 pts
+                    
+                    💸 **Total Financial Exposure (0-20 points)**
+                    - $10K+ = 20 pts | $7.5K-$10K = 15 pts | $5K-$7.5K = 12 pts | $2.5K-$5K = 8 pts | <$2.5K = 5 pts
+                    
+                    **Score Interpretation:**
+                    - 🔴 **80-100**: High Risk - Immediate attention needed
+                    - 🟡 **60-79**: Medium Risk - Monitor closely  
+                    - 🟢 **0-59**: Lower Risk - Standard monitoring
+                    """)
+                
                 # Format display
                 pilot_risk_display = pilot_risk_df.copy()
                 pilot_risk_display['Total Cost'] = pilot_risk_display['Total Cost'].apply(lambda x: f"${x:,.2f}")
