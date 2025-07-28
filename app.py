@@ -4,7 +4,6 @@ import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
 from datetime import datetime, timedelta
-import pytz
 import time
 import statistics
 import re
@@ -2931,9 +2930,6 @@ def scrape_sts_data():
             # Store in session state
             st.session_state.collected_data = df
             st.session_state.data_collected = True
-            # Store timestamp in ET timezone
-            et_timezone = pytz.timezone('US/Eastern')
-            st.session_state.last_updated = datetime.now(et_timezone)
             st.session_state.collection_status['export_file'] = filename
             
             st.success(f"✅ Data collection completed successfully!")
@@ -2975,33 +2971,6 @@ def main():
     # Header
     st.markdown('<h1 class="main-header">✈️ STS Claims Analytics Dashboard</h1>', unsafe_allow_html=True)
     
-    # Last Updated Banner
-    if 'last_updated' in st.session_state and st.session_state.get('data_collected', False):
-        last_updated = st.session_state['last_updated']
-        data_source = st.session_state.get('data_source', 'unknown')
-        
-        # Format the timestamp (already stored in ET)
-        formatted_time = last_updated.strftime("%B %d, %Y at %I:%M %p ET")
-        
-        st.markdown(f"""
-        <div style="
-            background-color: #1E7E34; 
-            color: #FFFFFF;
-            padding: 12px 16px; 
-            border-radius: 6px; 
-            border-left: 5px solid #28A745;
-            margin: 15px 0px;
-            display: flex;
-            align-items: center;
-            font-size: 15px;
-            font-weight: 500;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-        ">
-            <span style="margin-right: 10px; font-size: 16px;">🕒</span>
-            <strong>Last Updated:</strong>&nbsp;{formatted_time}
-        </div>
-        """, unsafe_allow_html=True)
-    
     # Sidebar controls
     with st.sidebar:
         st.header("🎛️ Dashboard Controls")
@@ -3019,42 +2988,6 @@ def main():
                 st.rerun()
         else:
             st.info("🔴 **Production Mode**\n\nReady for live data collection.")
-        
-        # Data Status Section
-        st.divider()
-        st.subheader("📊 Data Status")
-        
-        if st.session_state.get('data_collected', False) and 'last_updated' in st.session_state:
-            last_updated = st.session_state['last_updated']
-            data_source = st.session_state.get('data_source', 'unknown')
-            
-            # Calculate time ago (both timestamps are now in ET)
-            et_timezone = pytz.timezone('US/Eastern')
-            current_et = datetime.now(et_timezone)
-            time_ago = current_et - last_updated
-            
-            # Calculate time ago
-            if time_ago.days > 0:
-                time_str = f"{time_ago.days} day(s) ago"
-            elif time_ago.seconds > 3600:
-                hours = time_ago.seconds // 3600
-                time_str = f"{hours} hour(s) ago"
-            elif time_ago.seconds > 60:
-                minutes = time_ago.seconds // 60
-                time_str = f"{minutes} minute(s) ago"
-            else:
-                time_str = "Just now"
-            
-            # Get data count
-            df = get_data()
-            record_count = len(df) if not df.empty else 0
-            
-            st.metric("📊 Records Loaded", f"{record_count:,}")
-            st.metric("⏰ Last Updated", time_str)
-            st.metric("📁 Data Source", data_source.title())
-        else:
-            st.warning("⚠️ No data loaded")
-            st.write("Upload a CSV file or enable Demo Mode to begin.")
         
         st.divider()
         
@@ -3178,9 +3111,6 @@ def main():
                             st.session_state['uploaded_data'] = df_upload
                             st.session_state['data_source'] = 'uploaded'
                             st.session_state['data_collected'] = True
-                            # Store timestamp in ET timezone
-                            et_timezone = pytz.timezone('US/Eastern')
-                            st.session_state['last_updated'] = datetime.now(et_timezone)
                             
                             # Save to file for persistence
                             df_upload.to_csv('uploaded_claims_data.csv', index=False)
@@ -3246,9 +3176,6 @@ def main():
                             st.session_state['uploaded_data'] = manual_df
                             st.session_state['data_source'] = 'manual'
                             st.session_state['data_collected'] = True
-                            # Store timestamp in ET timezone
-                            et_timezone = pytz.timezone('US/Eastern')
-                            st.session_state['last_updated'] = datetime.now(et_timezone)
                             manual_df.to_csv('manual_claims_data.csv', index=False)
                         
                         st.success(f"✅ Record added! Total records: {len(st.session_state['manual_records'])}")
