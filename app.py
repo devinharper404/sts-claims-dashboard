@@ -2206,6 +2206,136 @@ def show_claims_details_tab():
     
     st.dataframe(display_df, use_container_width=True)
     
+    # === SUBJECT GROUPINGS BREAKDOWN ===
+    st.subheader("📂 Subject Groupings Breakdown")
+    st.markdown("*View which raw subjects are categorized under each subject grouping*")
+    
+    if 'subject' in df.columns:
+        # Add Subject_Grouped column to the dataframe
+        df_with_groups = df.copy()
+        df_with_groups['Subject_Grouped'] = df_with_groups['subject'].apply(group_subject_key)
+        
+        # Create a mapping of grouped subjects to raw subjects
+        subject_mapping = {}
+        for index, row in df_with_groups.iterrows():
+            raw_subject = row['subject']
+            grouped_subject = row['Subject_Grouped']
+            
+            if grouped_subject not in subject_mapping:
+                subject_mapping[grouped_subject] = set()
+            subject_mapping[grouped_subject].add(raw_subject)
+        
+        # Convert sets to sorted lists for display
+        for group in subject_mapping:
+            subject_mapping[group] = sorted(list(subject_mapping[group]))
+        
+        # Display options
+        col1, col2 = st.columns([1, 2])
+        
+        with col1:
+            view_option = st.radio(
+                "Display Format:",
+                options=["Expandable Groups", "Complete Table"],
+                index=0
+            )
+        
+        with col2:
+            if st.checkbox("Show case counts for each raw subject"):
+                show_counts = True
+            else:
+                show_counts = False
+        
+        if view_option == "Expandable Groups":
+            # Display as expandable sections for each group
+            for group_name in sorted(subject_mapping.keys()):
+                raw_subjects = subject_mapping[group_name]
+                
+                with st.expander(f"📁 {group_name} ({len(raw_subjects)} raw subjects)", expanded=False):
+                    if show_counts:
+                        # Show with case counts
+                        subject_data = []
+                        for raw_subject in raw_subjects:
+                            case_count = len(df[df['subject'] == raw_subject])
+                            subject_data.append({
+                                'Raw Subject': raw_subject,
+                                'Case Count': case_count
+                            })
+                        
+                        subject_df = pd.DataFrame(subject_data)
+                        subject_df = subject_df.sort_values('Case Count', ascending=False)
+                        st.dataframe(subject_df, use_container_width=True)
+                        
+                        # Summary stats
+                        total_cases = subject_df['Case Count'].sum()
+                        avg_cases = subject_df['Case Count'].mean()
+                        st.write(f"**Total Cases in Group:** {total_cases} | **Average per Subject:** {avg_cases:.1f}")
+                    else:
+                        # Simple list view
+                        for i, subject in enumerate(raw_subjects, 1):
+                            st.write(f"{i}. {subject}")
+        
+        else:
+            # Display as a complete table
+            table_data = []
+            for group_name in sorted(subject_mapping.keys()):
+                raw_subjects = subject_mapping[group_name]
+                for raw_subject in raw_subjects:
+                    row = {
+                        'Subject Group': group_name,
+                        'Raw Subject': raw_subject
+                    }
+                    
+                    if show_counts:
+                        case_count = len(df[df['subject'] == raw_subject])
+                        row['Case Count'] = case_count
+                    
+                    table_data.append(row)
+            
+            mapping_df = pd.DataFrame(table_data)
+            
+            if show_counts:
+                mapping_df = mapping_df.sort_values(['Subject Group', 'Case Count'], ascending=[True, False])
+            else:
+                mapping_df = mapping_df.sort_values(['Subject Group', 'Raw Subject'])
+            
+            # Add search functionality
+            search_term = st.text_input("🔍 Search subjects:", placeholder="Enter subject name or keyword...")
+            
+            if search_term:
+                mask = (mapping_df['Subject Group'].str.contains(search_term, case=False, na=False) | 
+                       mapping_df['Raw Subject'].str.contains(search_term, case=False, na=False))
+                mapping_df = mapping_df[mask]
+                st.write(f"Found {len(mapping_df)} matches for '{search_term}'")
+            
+            st.dataframe(mapping_df, use_container_width=True, height=400)
+            
+            # Summary statistics
+            st.subheader("📊 Summary Statistics")
+            col1, col2, col3 = st.columns(3)
+            
+            with col1:
+                st.metric("Total Subject Groups", len(subject_mapping))
+            
+            with col2:
+                total_raw_subjects = sum(len(subjects) for subjects in subject_mapping.values())
+                st.metric("Total Raw Subjects", total_raw_subjects)
+            
+            with col3:
+                avg_subjects_per_group = total_raw_subjects / len(subject_mapping) if subject_mapping else 0
+                st.metric("Avg Subjects per Group", f"{avg_subjects_per_group:.1f}")
+            
+            # Export subject mapping
+            if st.button("Export Subject Mapping to CSV"):
+                csv = mapping_df.to_csv(index=False)
+                st.download_button(
+                    label="Download Subject Mapping CSV",
+                    data=csv,
+                    file_name=f"subject_mapping_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                    mime="text/csv"
+                )
+    else:
+        st.info("Subject data not available in the current dataset.")
+    
     # Export functionality
     if st.button("Export Filtered Data to CSV"):
         csv = filtered_df.to_csv(index=False)
