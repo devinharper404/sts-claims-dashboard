@@ -1780,9 +1780,6 @@ def show_analytics_tab():
                 fig.update_layout(height=400)
                 st.plotly_chart(fig, use_container_width=True)
         
-        # Impasse analysis moved to dedicated Impasse Analysis tab
-        st.info("⚖️ **Impasse Analysis Relocated**: Complete impasse case analytics, trends, and subject breakdowns are now available in the dedicated 'Impasse Analysis' tab for focused analysis.")
-        
     except Exception as e:
         st.error(f"Error displaying analytics: {str(e)}")
 
@@ -2208,45 +2205,6 @@ def show_claims_details_tab():
         display_df['relief_dollars'] = display_df['relief_dollars'].apply(lambda x: f"${x:,.2f}")
     
     st.dataframe(display_df, use_container_width=True)
-    
-    # Quick Pilot Analytics
-    st.subheader("👨‍✈️ Quick Pilot Analytics")
-    
-    # Get analytics for current filtered data
-    if not filtered_df.empty:
-        # Calculate relief hours and minutes for pilots
-        pilot_relief_data = []
-        for pilot in filtered_df['pilot'].unique():
-            pilot_data = filtered_df[filtered_df['pilot'] == pilot]
-            total_relief_dollars = pilot_data['relief_dollars'].sum()
-            relief_rate = st.session_state.get('relief_rate', 320.47)
-            total_relief_hours = total_relief_dollars / relief_rate
-            total_relief_minutes = total_relief_hours * 60
-            
-            pilot_relief_data.append({
-                'Pilot': pilot,
-                'Cases': len(pilot_data),
-                'Total Relief ($)': f"${total_relief_dollars:,.2f}",
-                'Total Relief (HH:MM)': minutes_to_hhmm(total_relief_minutes),
-                'Avg Relief ($)': f"${pilot_data['relief_dollars'].mean():,.2f}",
-                'Approved Cases': (pilot_data['status'] == 'approved').sum()
-            })
-        
-        pilot_summary_df = pd.DataFrame(pilot_relief_data)
-        pilot_summary_df = pilot_summary_df.sort_values('Cases', ascending=False)
-        
-        col1, col2 = st.columns([2, 1])
-        with col1:
-            st.write("**Pilot Summary (Current Filters):**")
-            st.dataframe(pilot_summary_df, use_container_width=True)
-        
-        with col2:
-            # Quick stats
-            multi_case_pilots = pilot_summary_df[pilot_summary_df['Cases'] > 1]
-            st.metric("Pilots with Multiple Cases", len(multi_case_pilots))
-            if not multi_case_pilots.empty:
-                st.metric("Max Cases by One Pilot", int(pilot_summary_df['Cases'].max()))
-                st.metric("Avg Cases (Multi-Case Pilots)", f"{multi_case_pilots['Cases'].mean():.1f}")
     
     # Export functionality
     if st.button("Export Filtered Data to CSV"):
@@ -4297,14 +4255,29 @@ def show_impasse_analysis_tab():
         # ===== SUBJECT BREAKDOWN =====
         with st.expander("📋 Impasse Cases by Subject Group", expanded=True):
             st.subheader("Subject Group Analysis")
-            impasse_by_subject = impasse_df.groupby('Subject_Grouped').agg({
-                'case_number': 'count',
-                'relief_minutes': ['sum', 'mean']
-            }).round(2)
             
-            impasse_by_subject.columns = ['Case_Count', 'Total_Relief_Minutes', 'Avg_Relief_Minutes']
-            impasse_by_subject['Total_Relief_Dollars'] = impasse_by_subject['Total_Relief_Minutes'] * relief_rate / 60
-            impasse_by_subject['Avg_Relief_Dollars'] = impasse_by_subject['Avg_Relief_Minutes'] * relief_rate / 60
+            # Check if relief_minutes column exists
+            if 'relief_minutes' in impasse_df.columns:
+                impasse_by_subject = impasse_df.groupby('Subject_Grouped').agg({
+                    'case_number': 'count',
+                    'relief_minutes': ['sum', 'mean']
+                }).round(2)
+                
+                impasse_by_subject.columns = ['Case_Count', 'Total_Relief_Minutes', 'Avg_Relief_Minutes']
+                impasse_by_subject['Total_Relief_Dollars'] = impasse_by_subject['Total_Relief_Minutes'] * relief_rate / 60
+                impasse_by_subject['Avg_Relief_Dollars'] = impasse_by_subject['Avg_Relief_Minutes'] * relief_rate / 60
+            else:
+                # Fallback if relief_minutes doesn't exist
+                impasse_by_subject = impasse_df.groupby('Subject_Grouped').agg({
+                    'case_number': 'count'
+                }).round(2)
+                
+                impasse_by_subject.columns = ['Case_Count']
+                impasse_by_subject['Total_Relief_Minutes'] = 0
+                impasse_by_subject['Avg_Relief_Minutes'] = 0
+                impasse_by_subject['Total_Relief_Dollars'] = 0
+                impasse_by_subject['Avg_Relief_Dollars'] = 0
+            
             impasse_by_subject['Percentage_of_Impasse'] = (impasse_by_subject['Case_Count'] / total_impasse * 100).round(1)
             
             # Sort by case count
@@ -4351,13 +4324,21 @@ def show_impasse_analysis_tab():
                 
                 # Group by month-year
                 impasse_df['month_year'] = impasse_df['date_submitted'].dt.to_period('M')
-                monthly_impasse = impasse_df.groupby('month_year').agg({
-                    'case_number': 'count',
-                    'relief_minutes': 'sum'
-                }).reset_index()
+                
+                # Create aggregation dict based on available columns
+                agg_dict = {'case_number': 'count'}
+                if 'relief_minutes' in impasse_df.columns:
+                    agg_dict['relief_minutes'] = 'sum'
+                
+                monthly_impasse = impasse_df.groupby('month_year').agg(agg_dict).reset_index()
                 
                 monthly_impasse['month_year_str'] = monthly_impasse['month_year'].astype(str)
-                monthly_impasse['relief_dollars'] = monthly_impasse['relief_minutes'] * relief_rate / 60
+                
+                # Add relief_dollars if relief_minutes exists
+                if 'relief_minutes' in monthly_impasse.columns:
+                    monthly_impasse['relief_dollars'] = monthly_impasse['relief_minutes'] * relief_rate / 60
+                else:
+                    monthly_impasse['relief_dollars'] = 0
                 
                 # Also calculate overall monthly submission rates for comparison
                 df_with_groups['date_submitted'] = pd.to_datetime(df_with_groups['date_submitted'], errors='coerce')
@@ -4388,14 +4369,15 @@ def show_impasse_analysis_tab():
                     fig.update_xaxes(tickangle=45)
                     st.plotly_chart(fig, use_container_width=True)
                 
-                # Relief trends
-                st.subheader("Relief Value Trends")
-                fig = px.line(monthly_impasse, x='month_year_str', y='relief_dollars',
-                            title="Monthly Impasse Relief Value",
-                            labels={'relief_dollars': 'Relief Value ($)', 'month_year_str': 'Month'})
-                fig.update_xaxes(tickangle=45)
-                fig.update_yaxes(tickformat="$,.0f")
-                st.plotly_chart(fig, use_container_width=True)
+                # Relief trends (only show if relief data is available)
+                if 'relief_dollars' in monthly_impasse.columns and monthly_impasse['relief_dollars'].sum() > 0:
+                    st.subheader("Relief Value Trends")
+                    fig = px.line(monthly_impasse, x='month_year_str', y='relief_dollars',
+                                title="Monthly Impasse Relief Value",
+                                labels={'relief_dollars': 'Relief Value ($)', 'month_year_str': 'Month'})
+                    fig.update_xaxes(tickangle=45)
+                    fig.update_yaxes(tickformat="$,.0f")
+                    st.plotly_chart(fig, use_container_width=True)
             else:
                 st.info("Date information not available for trend analysis.")
         
@@ -4497,10 +4479,23 @@ def show_impasse_analysis_tab():
             with col2:
                 ascending = st.checkbox("Ascending order", value=False)
             
-            # Prepare display dataframe
-            display_cols = ['case_number', 'pilot', 'subject', 'date_submitted', 'relief_minutes']
-            if 'relief_dollars' in impasse_df.columns:
+            # Prepare display dataframe - only use columns that actually exist
+            available_cols = impasse_df.columns.tolist()
+            display_cols = []
+            
+            # Add columns that exist in the dataframe
+            for col in ['case_number', 'pilot', 'subject', 'date_submitted', 'relief_minutes']:
+                if col in available_cols:
+                    display_cols.append(col)
+            
+            # Add relief_dollars if it exists
+            if 'relief_dollars' in available_cols:
                 display_cols.append('relief_dollars')
+            
+            # Only proceed if we have some columns to display
+            if not display_cols:
+                st.error("No suitable columns found for display.")
+                return
             
             impasse_detail_df = impasse_df[display_cols].copy()
             
