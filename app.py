@@ -4,6 +4,7 @@ import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
 from datetime import datetime, timedelta
+import pytz
 import time
 import statistics
 import re
@@ -2977,8 +2978,17 @@ def main():
         last_updated = st.session_state['last_updated']
         data_source = st.session_state.get('data_source', 'unknown')
         
-        # Format the timestamp
-        formatted_time = last_updated.strftime("%B %d, %Y at %I:%M %p")
+        # Format the timestamp in Eastern Time
+        et_timezone = pytz.timezone('US/Eastern')
+        # Convert to ET if the timestamp is naive (no timezone info)
+        if last_updated.tzinfo is None:
+            # Assume the stored time is in local time, convert to ET
+            et_time = et_timezone.localize(last_updated)
+        else:
+            # Convert from whatever timezone to ET
+            et_time = last_updated.astimezone(et_timezone)
+        
+        formatted_time = et_time.strftime("%B %d, %Y at %I:%M %p ET")
         
         st.markdown(f"""
         <div style="
@@ -3024,7 +3034,18 @@ def main():
         if st.session_state.get('data_collected', False) and 'last_updated' in st.session_state:
             last_updated = st.session_state['last_updated']
             data_source = st.session_state.get('data_source', 'unknown')
-            time_ago = datetime.now() - last_updated
+            
+            # Calculate time ago using ET timezone
+            et_timezone = pytz.timezone('US/Eastern')
+            current_et = datetime.now(et_timezone)
+            
+            # Convert last_updated to ET if needed
+            if last_updated.tzinfo is None:
+                last_updated_et = et_timezone.localize(last_updated)
+            else:
+                last_updated_et = last_updated.astimezone(et_timezone)
+            
+            time_ago = current_et - last_updated_et
             
             # Calculate time ago
             if time_ago.days > 0:
