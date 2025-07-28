@@ -3354,6 +3354,68 @@ python sts_totalpackage_v2_Version5_Version2.py
     with tab7:
         show_30_day_lookback_tab()
 
+def calculate_pilot_risk_score(case_count, avg_cost, open_cases, total_cost):
+    """
+    Calculate a comprehensive risk score for a pilot based on multiple factors.
+    Returns a score from 0-100 where higher scores indicate higher risk.
+    """
+    risk_score = 0
+    
+    # Factor 1: Case frequency (0-30 points)
+    # More cases = higher risk
+    if case_count >= 10:
+        risk_score += 30
+    elif case_count >= 7:
+        risk_score += 25
+    elif case_count >= 5:
+        risk_score += 20
+    elif case_count >= 3:
+        risk_score += 15
+    else:
+        risk_score += 10
+    
+    # Factor 2: Average cost per case (0-25 points)
+    # Higher average cost = higher risk
+    if avg_cost >= 2000:
+        risk_score += 25
+    elif avg_cost >= 1500:
+        risk_score += 20
+    elif avg_cost >= 1000:
+        risk_score += 15
+    elif avg_cost >= 500:
+        risk_score += 10
+    else:
+        risk_score += 5
+    
+    # Factor 3: Open cases ratio (0-25 points)
+    # Higher percentage of open cases = higher risk
+    open_ratio = open_cases / case_count if case_count > 0 else 0
+    if open_ratio >= 0.8:
+        risk_score += 25
+    elif open_ratio >= 0.6:
+        risk_score += 20
+    elif open_ratio >= 0.4:
+        risk_score += 15
+    elif open_ratio >= 0.2:
+        risk_score += 10
+    else:
+        risk_score += 5
+    
+    # Factor 4: Total financial exposure (0-20 points)
+    # Higher total cost = higher risk
+    if total_cost >= 10000:
+        risk_score += 20
+    elif total_cost >= 7500:
+        risk_score += 15
+    elif total_cost >= 5000:
+        risk_score += 12
+    elif total_cost >= 2500:
+        risk_score += 8
+    else:
+        risk_score += 5
+    
+    return min(risk_score, 100)  # Cap at 100
+
 def show_executive_dashboard_tab():
     """Executive Cost Control Dashboard for business leaders and analysts"""
     st.header("🏢 Executive Cost Control Dashboard")
@@ -3647,7 +3709,7 @@ def show_executive_dashboard_tab():
                         'Open Cases': open_cases,
                         'Total Cost': total_cost,
                         'Avg Cost per Case': avg_cost,
-                        'Risk Score': case_count * avg_cost  # Simple risk scoring
+                        'Risk Score': calculate_pilot_risk_score(case_count, avg_cost, open_cases, total_cost)
                     })
             
             if pilot_risk_data:
@@ -3658,7 +3720,7 @@ def show_executive_dashboard_tab():
                 pilot_risk_display = pilot_risk_df.copy()
                 pilot_risk_display['Total Cost'] = pilot_risk_display['Total Cost'].apply(lambda x: f"${x:,.2f}")
                 pilot_risk_display['Avg Cost per Case'] = pilot_risk_display['Avg Cost per Case'].apply(lambda x: f"${x:,.2f}")
-                pilot_risk_display['Risk Score'] = pilot_risk_display['Risk Score'].apply(lambda x: f"{x:,.0f}")
+                pilot_risk_display['Risk Score'] = pilot_risk_display['Risk Score'].apply(lambda x: f"{x:.0f}/100")
                 
                 st.dataframe(pilot_risk_display, use_container_width=True)
         
