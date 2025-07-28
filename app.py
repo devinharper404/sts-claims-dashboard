@@ -4147,6 +4147,18 @@ def show_30_day_lookback_tab():
                 if len(subject_costs_30d) > 0 and subject_costs_30d['Total Cost'].sum() > 0:
                     fig = px.pie(subject_costs_30d.head(8), values='Total Cost', names='Subject',
                                title="Cost Distribution by Subject (Top 8)")
+                    # Adjust layout to prevent legend overlap
+                    fig.update_layout(
+                        height=500,  # Increase height to give more space
+                        legend=dict(
+                            orientation="v",  # Vertical legend
+                            yanchor="top",
+                            y=1,
+                            xanchor="left",
+                            x=1.05  # Position legend to the right of the chart
+                        ),
+                        margin=dict(l=20, r=120, t=50, b=20)  # Add right margin for legend
+                    )
                     st.plotly_chart(fig, use_container_width=True)
                 else:
                     st.info("No cost data available for pie chart")
