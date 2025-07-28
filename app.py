@@ -2931,7 +2931,9 @@ def scrape_sts_data():
             # Store in session state
             st.session_state.collected_data = df
             st.session_state.data_collected = True
-            st.session_state.last_updated = datetime.now()  # Track collection timestamp
+            # Store timestamp in ET timezone
+            et_timezone = pytz.timezone('US/Eastern')
+            st.session_state.last_updated = datetime.now(et_timezone)
             st.session_state.collection_status['export_file'] = filename
             
             st.success(f"✅ Data collection completed successfully!")
@@ -2978,17 +2980,8 @@ def main():
         last_updated = st.session_state['last_updated']
         data_source = st.session_state.get('data_source', 'unknown')
         
-        # Format the timestamp in Eastern Time
-        et_timezone = pytz.timezone('US/Eastern')
-        # Convert to ET if the timestamp is naive (no timezone info)
-        if last_updated.tzinfo is None:
-            # Assume the stored time is in local time, convert to ET
-            et_time = et_timezone.localize(last_updated)
-        else:
-            # Convert from whatever timezone to ET
-            et_time = last_updated.astimezone(et_timezone)
-        
-        formatted_time = et_time.strftime("%B %d, %Y at %I:%M %p ET")
+        # Format the timestamp (already stored in ET)
+        formatted_time = last_updated.strftime("%B %d, %Y at %I:%M %p ET")
         
         st.markdown(f"""
         <div style="
@@ -3035,17 +3028,10 @@ def main():
             last_updated = st.session_state['last_updated']
             data_source = st.session_state.get('data_source', 'unknown')
             
-            # Calculate time ago using ET timezone
+            # Calculate time ago (both timestamps are now in ET)
             et_timezone = pytz.timezone('US/Eastern')
             current_et = datetime.now(et_timezone)
-            
-            # Convert last_updated to ET if needed
-            if last_updated.tzinfo is None:
-                last_updated_et = et_timezone.localize(last_updated)
-            else:
-                last_updated_et = last_updated.astimezone(et_timezone)
-            
-            time_ago = current_et - last_updated_et
+            time_ago = current_et - last_updated
             
             # Calculate time ago
             if time_ago.days > 0:
@@ -3192,7 +3178,9 @@ def main():
                             st.session_state['uploaded_data'] = df_upload
                             st.session_state['data_source'] = 'uploaded'
                             st.session_state['data_collected'] = True
-                            st.session_state['last_updated'] = datetime.now()  # Track upload timestamp
+                            # Store timestamp in ET timezone
+                            et_timezone = pytz.timezone('US/Eastern')
+                            st.session_state['last_updated'] = datetime.now(et_timezone)
                             
                             # Save to file for persistence
                             df_upload.to_csv('uploaded_claims_data.csv', index=False)
@@ -3258,7 +3246,9 @@ def main():
                             st.session_state['uploaded_data'] = manual_df
                             st.session_state['data_source'] = 'manual'
                             st.session_state['data_collected'] = True
-                            st.session_state['last_updated'] = datetime.now()  # Track manual entry timestamp
+                            # Store timestamp in ET timezone
+                            et_timezone = pytz.timezone('US/Eastern')
+                            st.session_state['last_updated'] = datetime.now(et_timezone)
                             manual_df.to_csv('manual_claims_data.csv', index=False)
                         
                         st.success(f"✅ Record added! Total records: {len(st.session_state['manual_records'])}")
