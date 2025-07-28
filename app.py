@@ -1320,82 +1320,6 @@ def show_analytics_tab():
                 with an average value of **${top_subject['Avg_Value']:,.0f}** per claim.
                 """)
         
-        # ===== NEW: TOP 20 PILOTS BY RELIEF AMOUNT (FROM ORIGINAL SCRIPT) =====
-        st.subheader("Top 20 Pilots by Relief Amount - Overall")
-        if analytics.get('top20_pilots_overall'):
-            top_pilots_relief_df = pd.DataFrame(list(analytics['top20_pilots_overall'].items()), 
-                                               columns=['Pilot', 'Total Relief ($)'])
-            top_pilots_relief_df = top_pilots_relief_df.sort_values('Total Relief ($)', ascending=False)
-            
-            # Format the Total Relief ($) column for display
-            top_pilots_relief_display_df = top_pilots_relief_df.copy()
-            top_pilots_relief_display_df['Total Relief ($)'] = top_pilots_relief_display_df['Total Relief ($)'].apply(lambda x: f"${x:,.2f}" if pd.notnull(x) else "$0.00")
-            
-            col1, col2 = st.columns([2, 1])
-            with col1:
-                # Display with proper column formatting for sorting
-                st.dataframe(
-                    top_pilots_relief_df, 
-                    use_container_width=True,
-                    column_config={
-                        'Total Relief ($)': st.column_config.NumberColumn(
-                            'Total Relief ($)',
-                            format="$%.2f"
-                        )
-                    }
-                )
-            with col2:
-                # Use original numeric values for chart and show just employee numbers
-                chart_df = top_pilots_relief_df.head(10).copy()
-                # Extract just the employee number from pilot name (assuming format like "12345 - Name")
-                chart_df['Employee_Number'] = chart_df['Pilot'].apply(
-                    lambda x: x.split(' - ')[0] if ' - ' in str(x) else str(x)[:10]
-                )
-                
-                fig = px.bar(chart_df, x='Total Relief ($)', y='Employee_Number',
-                           title="Top 10 Pilots by Relief Amount", orientation='h',
-                           hover_data=['Pilot'])
-                fig.update_layout(height=400)
-                # Format x-axis to show currency
-                fig.update_xaxes(tickformat="$,.0f")
-                fig.update_yaxes(title="Employee Number")
-                st.plotly_chart(fig, use_container_width=True)
-        
-        # Top 20 Pilots by Relief Amount per Status
-        if analytics.get('top20_pilots_by_status'):
-            st.subheader("Top 20 Pilots by Relief Amount - By Status")
-            
-            # Create tabs for each status
-            status_tabs = st.tabs([status.title() for status in analytics['top20_pilots_by_status'].keys()])
-            
-            for i, (status, status_data) in enumerate(analytics['top20_pilots_by_status'].items()):
-                with status_tabs[i]:
-                    if status_data:
-                        status_df = pd.DataFrame(list(status_data.items()), 
-                                               columns=['Pilot', f'Relief ({status.title()})'])
-                        status_df = status_df.sort_values(f'Relief ({status.title()})', ascending=False)
-                        
-                        # Format the relief column for display
-                        status_df_display = status_df.copy()
-                        relief_col = f'Relief ({status.title()})'
-                        status_df_display[relief_col] = status_df_display[relief_col].apply(lambda x: f"${x:,.2f}")
-                        
-                        col1, col2 = st.columns([1, 1])
-                        with col1:
-                            st.dataframe(status_df_display, use_container_width=True)
-                        with col2:
-                            if len(status_df) > 0:
-                                # Use original numeric values for chart
-                                fig = px.bar(status_df.head(10), 
-                                           x=f'Relief ({status.title()})', y='Pilot',
-                                           title=f"Top 10 Pilots - {status.title()}", 
-                                           orientation='h')
-                                # Format x-axis to show currency
-                                fig.update_xaxes(tickformat="$,.0f")
-                                st.plotly_chart(fig, use_container_width=True)
-                    else:
-                        st.info(f"No data available for {status} status")
-        
         # ===== TOTAL RELIEF REQUESTED BY SUBJECT (FROM ORIGINAL SCRIPT) =====
         st.subheader("💰 Total Relief Requested by Subject (Hours, HH:MM & Percentages)")
         if analytics.get('subject_relief_sorted'):
@@ -1666,81 +1590,8 @@ def show_analytics_tab():
                                    labels={'Cases': 'Number of Cases', 'Relief': 'Total Relief ($)'})
                     st.plotly_chart(fig, use_container_width=True)
         
-        # ===== TOP 10 PILOTS BY CASE COUNT =====
-        if analytics.get('top_10_pilots_by_cases'):
-            st.subheader("Top 10 Pilots by Number of Cases Submitted")
-            top10_pilots_df = pd.DataFrame([
-                {'Rank': i+1, 'Pilot Employee #': pilot, 'Case Count': count}
-                for i, (pilot, count) in enumerate(analytics['top_10_pilots_by_cases'].items())
-            ])
-            
-            col1, col2 = st.columns([1, 1])
-            with col1:
-                st.dataframe(top10_pilots_df, use_container_width=True)
-            with col2:
-                fig = px.bar(top10_pilots_df, x='Pilot Employee #', y='Case Count',
-                           title="Top 10 Pilots by Case Count")
-                fig.update_xaxes(tickangle=45)
-                st.plotly_chart(fig, use_container_width=True)
-        
-        # Subject analysis - Enhanced to match original script
-        st.subheader("📋 Complete Subject Violation Breakdown (All Statuses)")
-        if analytics['subject_stats']:
-            # Get all statuses for column headers
-            all_statuses = analytics.get('all_statuses', [])
-            
-            # Create comprehensive subject breakdown
-            subject_summary = []
-            for subject, stats in analytics['subject_stats'].items():
-                row = {
-                    'Subject': subject,
-                    'Total Cases': stats['count'],
-                    'Total Relief ($)': stats['minutes'],  # This will be formatted below
-                    '% of Total Cases': round((stats['count'] / analytics.get('total_claims', 1)) * 100, 2)
-                }
-                
-                # Add counts for each status
-                for status in all_statuses:
-                    safe_status = status.replace(' ', '_').replace('-', '_')
-                    status_count = stats.get(f"{safe_status}_count", 0)
-                    row[f"{status.title()} Cases"] = status_count
-                
-                # Add probability and approval metrics
-                approved = stats.get('approved_count', 0)
-                denied = stats.get('denied_count', 0)
-                impasse = stats.get('impasse_count', 0)
-                total_decided = approved + denied + impasse  # Include impasse in decided cases
-                approval_rate = (approved / total_decided * 100) if total_decided > 0 else 0
-                row['Approval Rate (%)'] = round(approval_rate, 1)
-                
-                subject_summary.append(row)
-            
-            subject_df = pd.DataFrame(subject_summary)
-            subject_df = subject_df.sort_values('Total Relief ($)', ascending=False)
-            
-            # Format the Total Relief ($) column for display
-            subject_df_display = subject_df.copy()
-            subject_df_display['Total Relief ($)'] = subject_df_display['Total Relief ($)'].apply(lambda x: f"${x:,.2f}")
-            
-            # Display comprehensive table
-            st.dataframe(subject_df_display, use_container_width=True, height=400)
-            
-            # Create two visualizations side by side
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                # Subject distribution by relief value chart
-                fig1 = px.bar(subject_df.head(10), x='Subject', y='Total Relief ($)',
-                            title="Top 10 Subjects by Total Relief Value")
-                fig1.update_xaxes(tickangle=45)
-                st.plotly_chart(fig1, use_container_width=True)
-            
-            with col2:
-                # Subject distribution by case count
-                fig2 = px.bar(subject_df.head(10), x='Subject', y='Total Cases',
-                            title="Top 10 Subjects by Case Count")
-                fig2.update_xaxes(tickangle=45)
-                st.plotly_chart(fig2, use_container_width=True)
+        # Subject analysis moved to Comprehensive Analytics tab for consolidation
+        st.info("📋 **Subject Analysis Consolidated**: Complete subject violation breakdown, financial impact, and status trends are now available in the 'Comprehensive Analytics' tab → 'Subject Analysis Hub' for better organization.")
         
         # ===== PROBABILITY OF PAYMENT BY SUBJECT (FROM ORIGINAL SCRIPT) =====
         st.subheader("📊 Probability of Payment by Subject")
@@ -1836,42 +1687,8 @@ def show_analytics_tab():
                         fig.update_layout(height=300)
                         st.plotly_chart(fig, use_container_width=True)
         
-        # Outlier analysis
-        if analytics.get('outlier_analysis') and analytics['outlier_analysis'].get('high_cost_outliers'):
-            st.subheader("High Cost Outlier Analysis")
-            outliers = analytics['outlier_analysis']['high_cost_outliers']
-            if outliers:
-                outliers_df = pd.DataFrame(outliers)
-                outliers_display_df = outliers_df[['case_number', 'pilot', 'subject', 'relief_dollars', 'status']].copy()
-                
-                # Add status filter for this table
-                if 'status' in outliers_display_df.columns:
-                    col1, col2 = st.columns([2, 3])
-                    with col1:
-                        status_options = ['All'] + sorted(outliers_display_df['status'].dropna().unique().tolist())
-                        selected_status = st.selectbox(
-                            "Filter by Status:",
-                            options=status_options,
-                            index=0,
-                            key="outliers_status_filter"
-                        )
-                    with col2:
-                        if selected_status != 'All':
-                            outliers_display_df = outliers_display_df[outliers_display_df['status'] == selected_status]
-                            st.write(f"Showing {len(outliers_display_df)} outliers with status: **{selected_status}**")
-                        else:
-                            st.write(f"Showing all {len(outliers_display_df)} outliers")
-                
-                st.dataframe(
-                    outliers_display_df, 
-                    use_container_width=True,
-                    column_config={
-                        'relief_dollars': st.column_config.NumberColumn(
-                            'relief_dollars',
-                            format="$%.2f"
-                        )
-                    }
-                )
+        # Cost analysis moved to Executive Dashboard for consolidation
+        st.info("💰 **Cost Analysis Consolidated**: High cost outlier analysis and detailed cost breakdowns are now available in the 'Executive Dashboard' tab → 'High-Risk Cost Analysis' for centralized cost control.")
         
         # Monthly trends
         if analytics.get('monthly_trends'):
@@ -1963,224 +1780,8 @@ def show_analytics_tab():
                 fig.update_layout(height=400)
                 st.plotly_chart(fig, use_container_width=True)
         
-        # ===== IMPASSE ANALYTICS SECTION =====
-        st.subheader("Impasse Case Analytics")
-        
-        # Add Subject_Grouped column to dataframe for impasse analysis
-        df_with_groups = df.copy()
-        df_with_groups['Subject_Grouped'] = df_with_groups['subject'].apply(group_subject_key)
-        
-        # Filter for impasse cases
-        impasse_df = df_with_groups[df_with_groups['status'].str.lower() == 'impasse'].copy()
-        total_impasse = len(impasse_df)
-        total_cases = len(df_with_groups)
-        impasse_rate = (total_impasse / total_cases * 100) if total_cases > 0 else 0
-        
-        # Overview metrics
-        col1, col2, col3, col4 = st.columns(4)
-        with col1:
-            st.metric("Total Impasse Cases", total_impasse)
-        with col2:
-            st.metric("Impasse Rate", f"{impasse_rate:.1f}%")
-        with col3:
-            if total_impasse > 0:
-                avg_relief = impasse_df['relief_minutes'].mean() * relief_rate / 60 if 'relief_minutes' in impasse_df.columns else 0
-                st.metric("Avg Relief Value", f"${avg_relief:,.2f}")
-            else:
-                st.metric("Avg Relief Value", "$0.00")
-        with col4:
-            if total_impasse > 0:
-                total_relief = impasse_df['relief_minutes'].sum() * relief_rate / 60 if 'relief_minutes' in impasse_df.columns else 0
-                st.metric("Total Relief Value", f"${total_relief:,.2f}")
-            else:
-                st.metric("Total Relief Value", "$0.00")
-        
-        if total_impasse > 0:
-            # Subject breakdown of impasse cases
-            st.subheader("📊 Impasse Cases by Subject Group")
-            impasse_by_subject = impasse_df.groupby('Subject_Grouped').agg({
-                'case_number': 'count',
-                'relief_minutes': ['sum', 'mean']
-            }).round(2)
-            
-            impasse_by_subject.columns = ['Case_Count', 'Total_Relief_Minutes', 'Avg_Relief_Minutes']
-            impasse_by_subject['Total_Relief_Dollars'] = impasse_by_subject['Total_Relief_Minutes'] * relief_rate / 60
-            impasse_by_subject['Avg_Relief_Dollars'] = impasse_by_subject['Avg_Relief_Minutes'] * relief_rate / 60
-            impasse_by_subject['Percentage_of_Impasse'] = (impasse_by_subject['Case_Count'] / total_impasse * 100).round(1)
-            
-            # Sort by case count
-            impasse_by_subject = impasse_by_subject.sort_values('Case_Count', ascending=False)
-            
-            # Create display dataframe with formatted values
-            impasse_display_df = impasse_by_subject.copy()
-            impasse_display_df['Total_Relief_Dollars'] = impasse_display_df['Total_Relief_Dollars'].apply(lambda x: f"${x:,.2f}")
-            impasse_display_df['Avg_Relief_Dollars'] = impasse_display_df['Avg_Relief_Dollars'].apply(lambda x: f"${x:,.2f}")
-            impasse_display_df['Percentage_of_Impasse'] = impasse_display_df['Percentage_of_Impasse'].apply(lambda x: f"{x}%")
-            
-            # Rename columns for display
-            impasse_display_df = impasse_display_df.rename(columns={
-                'Case_Count': 'Cases',
-                'Total_Relief_Minutes': 'Total Relief (Min)',
-                'Avg_Relief_Minutes': 'Avg Relief (Min)',
-                'Total_Relief_Dollars': 'Total Relief ($)',
-                'Avg_Relief_Dollars': 'Avg Relief ($)',
-                'Percentage_of_Impasse': '% of Impasse Cases'
-            })
-            
-            st.dataframe(impasse_display_df, use_container_width=True)
-            
-            # Charts for impasse analysis
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                # Impasse cases by subject (bar chart)
-                fig = px.bar(impasse_by_subject.head(10).reset_index(), 
-                           x='Subject_Grouped', y='Case_Count',
-                           title="Top 10 Subject Groups by Impasse Cases",
-                           labels={'Case_Count': 'Number of Cases', 'Subject_Grouped': 'Subject Group'})
-                fig.update_xaxes(tickangle=45)
-                st.plotly_chart(fig, use_container_width=True)
-            
-            with col2:
-                # Impasse relief by subject (bar chart)
-                fig = px.bar(impasse_by_subject.head(10).reset_index(), 
-                           x='Subject_Grouped', y='Total_Relief_Dollars',
-                           title="Top 10 Subject Groups by Impasse Relief Value",
-                           labels={'Total_Relief_Dollars': 'Total Relief ($)', 'Subject_Grouped': 'Subject Group'})
-                fig.update_xaxes(tickangle=45)
-                fig.update_yaxes(tickformat="$,.0f")
-                st.plotly_chart(fig, use_container_width=True)
-            
-            # Impasse trends over time
-            if 'date_submitted' in impasse_df.columns:
-                st.subheader("📈 Impasse Case Trends Over Time")
-                
-                # Convert date_submitted to datetime
-                impasse_df['date_submitted'] = pd.to_datetime(impasse_df['date_submitted'], errors='coerce')
-                
-                # Group by month-year
-                impasse_df['month_year'] = impasse_df['date_submitted'].dt.to_period('M')
-                monthly_impasse = impasse_df.groupby('month_year').agg({
-                    'case_number': 'count',
-                    'relief_minutes': 'sum'
-                }).reset_index()
-                
-                monthly_impasse['month_year_str'] = monthly_impasse['month_year'].astype(str)
-                monthly_impasse['relief_dollars'] = monthly_impasse['relief_minutes'] * relief_rate / 60
-                
-                # Also calculate overall monthly submission rates for comparison
-                df_with_groups['date_submitted'] = pd.to_datetime(df_with_groups['date_submitted'], errors='coerce')
-                df_with_groups['month_year'] = df_with_groups['date_submitted'].dt.to_period('M')
-                monthly_total = df_with_groups.groupby('month_year').size().reset_index(name='total_cases')
-                monthly_total['month_year_str'] = monthly_total['month_year'].astype(str)
-                
-                # Merge for impasse rate calculation
-                monthly_trends = pd.merge(monthly_total, monthly_impasse, on='month_year_str', how='left')
-                monthly_trends['case_number'] = monthly_trends['case_number'].fillna(0)
-                monthly_trends['impasse_rate'] = (monthly_trends['case_number'] / monthly_trends['total_cases'] * 100).round(1)
-                
-                col1, col2 = st.columns(2)
-                
-                with col1:
-                    # Monthly impasse case count
-                    fig = px.line(monthly_impasse, x='month_year_str', y='case_number',
-                                title="Monthly Impasse Cases",
-                                labels={'case_number': 'Number of Cases', 'month_year_str': 'Month'})
-                    fig.update_xaxes(tickangle=45)
-                    st.plotly_chart(fig, use_container_width=True)
-                
-                with col2:
-                    # Monthly impasse rate
-                    fig = px.line(monthly_trends, x='month_year_str', y='impasse_rate',
-                                title="Monthly Impasse Rate (%)",
-                                labels={'impasse_rate': 'Impasse Rate (%)', 'month_year_str': 'Month'})
-                    fig.update_xaxes(tickangle=45)
-                    st.plotly_chart(fig, use_container_width=True)
-                
-                # Relief trends
-                fig = px.line(monthly_impasse, x='month_year_str', y='relief_dollars',
-                            title="Monthly Impasse Relief Value",
-                            labels={'relief_dollars': 'Relief Value ($)', 'month_year_str': 'Month'})
-                fig.update_xaxes(tickangle=45)
-                fig.update_yaxes(tickformat="$,.0f")
-                st.plotly_chart(fig, use_container_width=True)
-            
-            # Impasse rate by subject comparison
-            st.subheader("Impasse Rates by Subject")
-            
-            # Create tabs for grouped vs raw subjects
-            tab1, tab2 = st.tabs(["📊 Subject Groups", "📋 Raw Subjects"])
-            
-            with tab1:
-                st.write("**Impasse rates grouped by subject categories**")
-                
-                # Calculate impasse rates by subject groups
-                subject_totals_grouped = df_with_groups.groupby('Subject_Grouped').size()
-                subject_impasse_grouped = impasse_df.groupby('Subject_Grouped').size()
-                subject_rates_grouped = pd.DataFrame({
-                    'Total_Cases': subject_totals_grouped,
-                    'Impasse_Cases': subject_impasse_grouped
-                }).fillna(0)
-                
-                subject_rates_grouped['Impasse_Rate'] = (subject_rates_grouped['Impasse_Cases'] / subject_rates_grouped['Total_Cases'] * 100).round(1)
-                subject_rates_grouped = subject_rates_grouped[subject_rates_grouped['Total_Cases'] >= 5]  # Only subjects with 5+ cases
-                subject_rates_grouped = subject_rates_grouped.sort_values('Impasse_Rate', ascending=False)
-                
-                # Create display dataframe for grouped
-                subject_rates_grouped_display = subject_rates_grouped.copy()
-                subject_rates_grouped_display['Impasse_Rate'] = subject_rates_grouped_display['Impasse_Rate'].apply(lambda x: f"{x}%")
-                subject_rates_grouped_display = subject_rates_grouped_display.rename(columns={
-                    'Total_Cases': 'Total Cases',
-                    'Impasse_Cases': 'Impasse Cases',
-                    'Impasse_Rate': 'Impasse Rate'
-                })
-                
-                st.dataframe(subject_rates_grouped_display.head(20), use_container_width=True)
-                
-                # Chart for grouped impasse rates
-                fig = px.bar(subject_rates_grouped.head(15).reset_index(), 
-                           x='Subject_Grouped', y='Impasse_Rate',
-                           title="Top 15 Subject Groups by Impasse Rate (Min 5 Cases)",
-                           labels={'Impasse_Rate': 'Impasse Rate (%)', 'Subject_Grouped': 'Subject Group'})
-                fig.update_xaxes(tickangle=45)
-                st.plotly_chart(fig, use_container_width=True)
-            
-            with tab2:
-                st.write("**Impasse rates by individual subject codes**")
-                
-                # Calculate impasse rates by raw subjects
-                subject_totals_raw = df_with_groups.groupby('subject').size()
-                subject_impasse_raw = impasse_df.groupby('subject').size()
-                subject_rates_raw = pd.DataFrame({
-                    'Total_Cases': subject_totals_raw,
-                    'Impasse_Cases': subject_impasse_raw
-                }).fillna(0)
-                
-                subject_rates_raw['Impasse_Rate'] = (subject_rates_raw['Impasse_Cases'] / subject_rates_raw['Total_Cases'] * 100).round(1)
-                subject_rates_raw = subject_rates_raw[subject_rates_raw['Total_Cases'] >= 3]  # Lower threshold for raw subjects
-                subject_rates_raw = subject_rates_raw.sort_values('Impasse_Rate', ascending=False)
-                
-                # Create display dataframe for raw
-                subject_rates_raw_display = subject_rates_raw.copy()
-                subject_rates_raw_display['Impasse_Rate'] = subject_rates_raw_display['Impasse_Rate'].apply(lambda x: f"{x}%")
-                subject_rates_raw_display = subject_rates_raw_display.rename(columns={
-                    'Total_Cases': 'Total Cases',
-                    'Impasse_Cases': 'Impasse Cases',
-                    'Impasse_Rate': 'Impasse Rate'
-                })
-                
-                st.dataframe(subject_rates_raw_display.head(25), use_container_width=True)
-                
-                # Chart for raw impasse rates
-                fig = px.bar(subject_rates_raw.head(20).reset_index(), 
-                           x='subject', y='Impasse_Rate',
-                           title="Top 20 Individual Subjects by Impasse Rate (Min 3 Cases)",
-                           labels={'Impasse_Rate': 'Impasse Rate (%)', 'subject': 'Subject'})
-                fig.update_xaxes(tickangle=45)
-                st.plotly_chart(fig, use_container_width=True)
-        
-        else:
-            st.info("No impasse cases found in the current dataset.")
+        # Impasse analysis moved to dedicated Impasse Analysis tab
+        st.info("⚖️ **Impasse Analysis Relocated**: Complete impasse case analytics, trends, and subject breakdowns are now available in the dedicated 'Impasse Analysis' tab for focused analysis.")
         
     except Exception as e:
         st.error(f"Error displaying analytics: {str(e)}")
@@ -3331,7 +2932,7 @@ python sts_totalpackage_v2_Version5_Version2.py
                 st.metric("Total Relief Value", f"${df[relief_col].sum():,.2f}")
     
     # Main content tabs
-    tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs(["📈 Overview", "📊 Analytics", "💰 Financial", "📋 Claims Details", "🔍 Comprehensive Analytics", "🏢 Executive Dashboard", "📅 30-Day Lookback"])
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs(["📈 Overview", "📊 Analytics", "💰 Financial", "📋 Claims Details", "🔍 Comprehensive Analytics", "🏢 Executive Dashboard", "📅 30-Day Lookback", "⚖️ Impasse Analysis"])
     
     with tab1:
         show_overview_tab()
@@ -3353,6 +2954,9 @@ python sts_totalpackage_v2_Version5_Version2.py
     
     with tab7:
         show_30_day_lookback_tab()
+    
+    with tab8:
+        show_impasse_analysis_tab()
 
 def calculate_pilot_risk_score(case_count, avg_cost, open_cases, total_cost):
     """
@@ -3999,81 +3603,277 @@ def show_comprehensive_analytics_tab():
         else:
             st.info("No incident date data available for oldest cases analysis.")
     
-    # === VIOLATION BREAKDOWN BY SUBJECT INCLUDING STATUS SEGMENTATION ===
-    with st.expander("🎯 Violation Breakdown by Subject with Status Segmentation", expanded=True):
-        st.subheader("Subject Analysis with Relief by Status")
+    # === COMPREHENSIVE SUBJECT ANALYSIS HUB ===
+    with st.expander("📋 Subject Analysis Hub", expanded=True):
+        st.subheader("Comprehensive Subject Analysis")
+        st.markdown("*Unified view of violation breakdowns, financial impact, cost analysis, and trends*")
         
-        # Create comprehensive subject breakdown
-        subject_breakdown_data = []
-        for subject, stats in analytics['subject_stats'].items():
-            # Base data
-            total_cases = stats['count']
-            total_relief_mins = stats.get('minutes', 0)
-            total_relief_hhmm = minutes_to_hhmm(total_relief_mins)
-            total_relief_cost = relief_dollars(total_relief_mins, relief_rate)
-            
-            # Status breakdown
-            status_details = {}
-            for status in analytics['all_statuses']:
-                safe_status = status.replace(' ', '_').replace('-', '_')
-                count_key = f"{safe_status}_count"
-                dollars_key = f"{safe_status}_dollars"
-                status_details[f"{status.title()} Count"] = stats.get(count_key, 0)
-                status_details[f"{status.title()} Relief"] = f"${stats.get(dollars_key, 0):,.2f}"
-            
-            row_data = {
-                'Subject': subject,
-                'Total Cases': total_cases,
-                'Total Relief (HH:MM)': total_relief_hhmm,
-                'Total Relief Cost': f"${total_relief_cost:,.2f}",
-                **status_details
-            }
-            subject_breakdown_data.append(row_data)
+        # Create tabs for different subject analysis views
+        subject_tab1, subject_tab2, subject_tab3, subject_tab4 = st.tabs([
+            "📊 Violation Breakdown", 
+            "💰 Financial Impact", 
+            "🎯 Cost Analysis", 
+            "📈 Status Trends"
+        ])
         
-        # Sort by total relief cost
-        subject_breakdown_data.sort(key=lambda x: float(x['Total Relief Cost'].replace('$', '').replace(',', '')), reverse=True)
-        subject_breakdown_df = pd.DataFrame(subject_breakdown_data)
-        st.dataframe(subject_breakdown_df, use_container_width=True)
+        with subject_tab1:
+            st.markdown("**Complete Subject Violation Breakdown (All Statuses)**")
+            if analytics.get('subject_stats'):
+                # Create comprehensive subject breakdown
+                subject_breakdown_data = []
+                for subject, stats in analytics['subject_stats'].items():
+                    # Base data
+                    total_cases = stats['count']
+                    total_relief_mins = stats.get('minutes', 0)
+                    total_relief_hhmm = minutes_to_hhmm(total_relief_mins)
+                    total_relief_cost = relief_dollars(total_relief_mins, relief_rate)
+                    
+                    row_data = {
+                        'Subject': subject,
+                        'Total Cases': total_cases,
+                        'Total Relief (HH:MM)': total_relief_hhmm,
+                        'Total Relief Cost': f"${total_relief_cost:,.2f}",
+                        '% of Total Cases': f"{(total_cases / analytics.get('total_claims', 1)) * 100:.2f}%"
+                    }
+                    subject_breakdown_data.append(row_data)
+                
+                # Sort by total cases
+                subject_breakdown_data.sort(key=lambda x: x['Total Cases'], reverse=True)
+                subject_breakdown_df = pd.DataFrame(subject_breakdown_data)
+                
+                col1, col2 = st.columns([2, 1])
+                with col1:
+                    st.dataframe(subject_breakdown_df, use_container_width=True)
+                with col2:
+                    # Chart for top subjects by case count
+                    if len(subject_breakdown_data) > 0:
+                        chart_data = subject_breakdown_df.head(10).copy()
+                        fig = px.bar(chart_data, y='Subject', x='Total Cases',
+                                   title="Top 10 Subjects by Case Count", orientation='h')
+                        fig.update_layout(height=400)
+                        st.plotly_chart(fig, use_container_width=True)
+            else:
+                st.info("No subject violation data available.")
+        
+        with subject_tab2:
+            st.markdown("**Total Relief Requested by Subject (Financial Breakdown)**")
+            if analytics.get('subject_relief_sorted'):
+                financial_data = []
+                for subject, hours in analytics['subject_relief_sorted']:
+                    percentage = analytics['subject_relief_percentages'].get(subject, 0)
+                    minutes = hours * 60
+                    financial_data.append({
+                        'Subject': subject,
+                        'Hours': round(hours, 2),
+                        'HH:MM': minutes_to_hhmm(minutes),
+                        'Percentage of Total': f"{percentage:.2f}%",
+                        'Dollar Value': f"${analytics['subject_relief_totals'].get(subject, 0):,.2f}"
+                    })
+                
+                financial_df = pd.DataFrame(financial_data)
+                
+                col1, col2 = st.columns([2, 1])
+                with col1:
+                    st.dataframe(financial_df, use_container_width=True)
+                with col2:
+                    # Chart showing top subjects by relief hours
+                    if len(financial_data) > 0:
+                        chart_data = financial_df.head(10).copy()
+                        chart_data['Hours_Numeric'] = chart_data['Hours']
+                        fig = px.bar(chart_data, y='Subject', x='Hours_Numeric',
+                                   title="Top 10 Subjects by Relief Hours", orientation='h')
+                        fig.update_xaxes(title="Relief Hours")
+                        fig.update_layout(height=400)
+                        st.plotly_chart(fig, use_container_width=True)
+            else:
+                st.info("No financial breakdown data available.")
+        
+        with subject_tab3:
+            st.markdown("**Cost Analysis by Subject (Open Cases Focus)**")
+            st.info("*Detailed cost analysis by subject is available in Executive Dashboard → High-Risk Cost Analysis*")
+            
+            # Preview of cost data if available
+            if analytics.get('cost_analytics', {}).get('actual_paid_by_subject'):
+                st.markdown("**Preview: Top Cost Impact Subjects**")
+                cost_data = analytics['cost_analytics']['actual_paid_by_subject']
+                preview_data = []
+                for subject, cost in list(cost_data.items())[:10]:
+                    preview_data.append({
+                        'Subject': subject,
+                        'Actual Paid': f"${cost:,.2f}"
+                    })
+                preview_df = pd.DataFrame(preview_data)
+                st.dataframe(preview_df, use_container_width=True)
+                st.markdown("*View complete cost analysis in Executive Dashboard → High-Risk Cost Analysis → Cost by Subject*")
+            else:
+                st.info("No cost analysis data available.")
+        
+        with subject_tab4:
+            st.markdown("**Subject Analysis with Relief by Status**")
+            if analytics.get('subject_stats'):
+                # Create comprehensive subject breakdown with status details
+                status_breakdown_data = []
+                for subject, stats in analytics['subject_stats'].items():
+                    # Base data
+                    total_cases = stats['count']
+                    total_relief_mins = stats.get('minutes', 0)
+                    total_relief_hhmm = minutes_to_hhmm(total_relief_mins)
+                    total_relief_cost = relief_dollars(total_relief_mins, relief_rate)
+                    
+                    # Status breakdown
+                    status_details = {}
+                    for status in analytics['all_statuses']:
+                        safe_status = status.replace(' ', '_').replace('-', '_')
+                        count_key = f"{safe_status}_count"
+                        dollars_key = f"{safe_status}_dollars"
+                        status_details[f"{status.title()} Count"] = stats.get(count_key, 0)
+                        status_details[f"{status.title()} Relief"] = f"${stats.get(dollars_key, 0):,.2f}"
+                    
+                    row_data = {
+                        'Subject': subject,
+                        'Total Cases': total_cases,
+                        'Total Relief (HH:MM)': total_relief_hhmm,
+                        'Total Relief Cost': f"${total_relief_cost:,.2f}",
+                        **status_details
+                    }
+                    status_breakdown_data.append(row_data)
+                
+                # Sort by total relief cost
+                status_breakdown_data.sort(key=lambda x: float(x['Total Relief Cost'].replace('$', '').replace(',', '')), reverse=True)
+                status_breakdown_df = pd.DataFrame(status_breakdown_data)
+                st.dataframe(status_breakdown_df, use_container_width=True)
+            else:
+                st.info("No subject status breakdown data available.")
     
-    # === TOP 20 PILOTS BY RELIEF (OVERALL AND BY STATUS) ===
-    with st.expander("Top 20 Pilots by Relief Requested", expanded=True):
-        st.subheader("Top Pilots by Relief Amount")
+    # === COMPREHENSIVE PILOT PERFORMANCE ANALYSIS ===
+    with st.expander("👨‍✈️ Comprehensive Pilot Performance Analysis", expanded=True):
+        st.subheader("Pilot Performance Analysis Hub")
+        st.markdown("*Consolidated view of all pilot rankings and performance metrics*")
         
-        # Overall top 20
-        st.markdown("**Top 20 Pilots (Overall Relief)**")
-        top20_overall_data = []
-        for i, (pilot, relief_cost) in enumerate(analytics['top20_pilots_overall'].items(), 1):
-            relief_hours = relief_cost / relief_rate
-            relief_mins = relief_hours * 60
-            relief_hhmm = minutes_to_hhmm(relief_mins)
-            top20_overall_data.append({
-                'Rank': i,
-                'Pilot Employee #': pilot,
-                'Relief (HH:MM)': relief_hhmm,
-                'Relief Cost': f"${relief_cost:,.2f}"
-            })
+        # Create tabs for different pilot metrics
+        pilot_tab1, pilot_tab2, pilot_tab3, pilot_tab4 = st.tabs([
+            "🎯 Top 20 by Relief Amount", 
+            "📊 Top 10 by Case Count", 
+            "📈 Relief by Status", 
+            "💰 High-Risk Pilots"
+        ])
         
-        top20_overall_df = pd.DataFrame(top20_overall_data)
-        st.dataframe(top20_overall_df, use_container_width=True)
-        
-        # By status
-        for status, pilot_data in analytics['top20_pilots_by_status'].items():
-            if pilot_data:  # Only show if there's data
-                st.markdown(f"**Top 20 Pilots - {status.title()} Status**")
-                status_data = []
-                for i, (pilot, relief_cost) in enumerate(pilot_data.items(), 1):
+        with pilot_tab1:
+            st.markdown("**Top 20 Pilots by Total Relief Amount**")
+            if analytics.get('top20_pilots_overall'):
+                top20_overall_data = []
+                for i, (pilot, relief_cost) in enumerate(analytics['top20_pilots_overall'].items(), 1):
                     relief_hours = relief_cost / relief_rate
                     relief_mins = relief_hours * 60
                     relief_hhmm = minutes_to_hhmm(relief_mins)
-                    status_data.append({
+                    top20_overall_data.append({
                         'Rank': i,
                         'Pilot Employee #': pilot,
                         'Relief (HH:MM)': relief_hhmm,
                         'Relief Cost': f"${relief_cost:,.2f}"
                     })
                 
-                status_df = pd.DataFrame(status_data)
-                st.dataframe(status_df, use_container_width=True)
+                top20_overall_df = pd.DataFrame(top20_overall_data)
+                
+                col1, col2 = st.columns([2, 1])
+                with col1:
+                    st.dataframe(top20_overall_df, use_container_width=True)
+                with col2:
+                    # Chart for top 10 pilots by relief amount
+                    if len(top20_overall_data) > 0:
+                        chart_data = top20_overall_df.head(10).copy()
+                        # Convert relief cost back to numeric for charting
+                        chart_data['Relief_Numeric'] = [float(x.replace('$', '').replace(',', '')) for x in chart_data['Relief Cost']]
+                        fig = px.bar(chart_data, y='Pilot Employee #', x='Relief_Numeric',
+                                   title="Top 10 Pilots by Relief Amount", orientation='h')
+                        fig.update_xaxes(tickformat="$,.0f", title="Relief Amount ($)")
+                        fig.update_layout(height=400)
+                        st.plotly_chart(fig, use_container_width=True)
+            else:
+                st.info("No pilot relief data available.")
+        
+        with pilot_tab2:
+            st.markdown("**Top 10 Pilots by Number of Cases Submitted**")
+            if analytics.get('top_10_pilots_by_cases'):
+                top10_cases_data = []
+                for i, (pilot, count) in enumerate(analytics['top_10_pilots_by_cases'].items(), 1):
+                    top10_cases_data.append({
+                        'Rank': i,
+                        'Pilot Employee #': pilot,
+                        'Number of Cases': count
+                    })
+                
+                top10_cases_df = pd.DataFrame(top10_cases_data)
+                
+                col1, col2 = st.columns([2, 1])
+                with col1:
+                    st.dataframe(top10_cases_df, use_container_width=True)
+                with col2:
+                    # Chart for case counts
+                    fig = px.bar(top10_cases_df, x='Pilot Employee #', y='Number of Cases',
+                               title="Top 10 Pilots by Case Count")
+                    fig.update_xaxes(tickangle=45)
+                    fig.update_layout(height=400)
+                    st.plotly_chart(fig, use_container_width=True)
+            else:
+                st.info("No pilot case count data available.")
+        
+        with pilot_tab3:
+            st.markdown("**Top 20 Pilots by Relief Amount - Breakdown by Status**")
+            if analytics.get('top20_pilots_by_status'):
+                # Create sub-tabs for each status
+                status_subtabs = st.tabs([status.title() for status in analytics['top20_pilots_by_status'].keys()])
+                
+                for i, (status, pilot_data) in enumerate(analytics['top20_pilots_by_status'].items()):
+                    with status_subtabs[i]:
+                        if pilot_data:
+                            status_data = []
+                            for j, (pilot, relief_cost) in enumerate(pilot_data.items(), 1):
+                                relief_hours = relief_cost / relief_rate
+                                relief_mins = relief_hours * 60
+                                relief_hhmm = minutes_to_hhmm(relief_mins)
+                                status_data.append({
+                                    'Rank': j,
+                                    'Pilot Employee #': pilot,
+                                    'Relief (HH:MM)': relief_hhmm,
+                                    'Relief Cost': f"${relief_cost:,.2f}"
+                                })
+                            
+                            status_df = pd.DataFrame(status_data)
+                            
+                            col1, col2 = st.columns([2, 1])
+                            with col1:
+                                st.dataframe(status_df, use_container_width=True)
+                            with col2:
+                                # Chart for top 10 in this status
+                                if len(status_data) > 0:
+                                    chart_data = status_df.head(10).copy()
+                                    chart_data['Relief_Numeric'] = [float(x.replace('$', '').replace(',', '')) for x in chart_data['Relief Cost']]
+                                    fig = px.bar(chart_data, y='Pilot Employee #', x='Relief_Numeric',
+                                               title=f"Top 10 - {status.title()} Cases", orientation='h')
+                                    fig.update_xaxes(tickformat="$,.0f")
+                                    fig.update_layout(height=400)
+                                    st.plotly_chart(fig, use_container_width=True)
+                        else:
+                            st.info(f"No data available for {status} status")
+            else:
+                st.info("No pilot status breakdown data available.")
+        
+        with pilot_tab4:
+            st.markdown("**High-Risk Pilot Analysis**")
+            st.info("High-risk pilot analysis is available in the Executive Dashboard tab for detailed cost control metrics.")
+            if analytics.get('top_pilots_by_cost'):
+                st.markdown("**Preview: Top Cost Impact Pilots**")
+                cost_preview = analytics['top_pilots_by_cost'][:5]  # Show top 5 as preview
+                preview_data = []
+                for pilot_data in cost_preview:
+                    preview_data.append({
+                        'Pilot': pilot_data['pilot'],
+                        'Total Cost Impact': f"${pilot_data['total_cost']:,.2f}"
+                    })
+                preview_df = pd.DataFrame(preview_data)
+                st.dataframe(preview_df, use_container_width=True)
+                st.markdown("*View complete high-risk analysis in Executive Dashboard → High-Risk Cost Analysis*")
     
     # === RECENT CASES AND TOP PILOTS BY CASES ===
     with st.expander("📈 Recent Activity & Top Submitters", expanded=True):
@@ -4084,17 +3884,9 @@ def show_comprehensive_analytics_tab():
             st.metric("Cases with Activity in Past 7 Days", analytics['recent_cases'])
         
         with col2:
-            st.subheader("Top 10 Pilots by Number of Cases")
-            top10_data = []
-            for i, (pilot, count) in enumerate(analytics['top_10_pilots_by_cases'].items(), 1):
-                top10_data.append({
-                    'Rank': i,
-                    'Pilot Employee #': pilot,
-                    'Number of Cases': count
-                })
-            
-            top10_df = pd.DataFrame(top10_data)
-            st.dataframe(top10_df, use_container_width=True)
+            st.subheader("Case Velocity Metrics")
+            st.metric("Cases with Activity in Past 7 Days", analytics['recent_cases'])
+            # Additional velocity metrics can be added here
     
     # === PROBABILITY OF PAYMENT BY SUBJECT ===
     with st.expander("🎲 Probability Analysis", expanded=True):
@@ -4458,6 +4250,299 @@ def show_30_day_lookback_tab():
         
     except Exception as e:
         st.error(f"Error loading 30-day lookback: {str(e)}")
+
+def show_impasse_analysis_tab():
+    """Dedicated impasse case analysis tab with comprehensive insights"""
+    st.header("⚖️ Impasse Case Analytics")
+    st.markdown("*Comprehensive analysis of cases at impasse, including trends, patterns, and subject breakdowns*")
+    
+    df = get_data()
+    if df.empty:
+        st.warning("No data available for impasse analysis.")
+        return
+    
+    relief_rate = st.session_state.get('relief_rate', 320.47)
+    
+    # Add Subject_Grouped column to dataframe for impasse analysis
+    df_with_groups = df.copy()
+    df_with_groups['Subject_Grouped'] = df_with_groups['subject'].apply(group_subject_key)
+    
+    # Filter for impasse cases
+    impasse_df = df_with_groups[df_with_groups['status'].str.lower() == 'impasse'].copy()
+    total_impasse = len(impasse_df)
+    total_cases = len(df_with_groups)
+    impasse_rate = (total_impasse / total_cases * 100) if total_cases > 0 else 0
+    
+    # ===== OVERVIEW METRICS =====
+    st.subheader("📊 Impasse Overview")
+    col1, col2, col3, col4 = st.columns(4)
+    with col1:
+        st.metric("Total Impasse Cases", total_impasse)
+    with col2:
+        st.metric("Impasse Rate", f"{impasse_rate:.1f}%")
+    with col3:
+        if total_impasse > 0:
+            avg_relief = impasse_df['relief_minutes'].mean() * relief_rate / 60 if 'relief_minutes' in impasse_df.columns else 0
+            st.metric("Avg Relief Value", f"${avg_relief:,.2f}")
+        else:
+            st.metric("Avg Relief Value", "$0.00")
+    with col4:
+        if total_impasse > 0:
+            total_relief = impasse_df['relief_minutes'].sum() * relief_rate / 60 if 'relief_minutes' in impasse_df.columns else 0
+            st.metric("Total Relief Value", f"${total_relief:,.2f}")
+        else:
+            st.metric("Total Relief Value", "$0.00")
+    
+    if total_impasse > 0:
+        # ===== SUBJECT BREAKDOWN =====
+        with st.expander("📋 Impasse Cases by Subject Group", expanded=True):
+            st.subheader("Subject Group Analysis")
+            impasse_by_subject = impasse_df.groupby('Subject_Grouped').agg({
+                'case_number': 'count',
+                'relief_minutes': ['sum', 'mean']
+            }).round(2)
+            
+            impasse_by_subject.columns = ['Case_Count', 'Total_Relief_Minutes', 'Avg_Relief_Minutes']
+            impasse_by_subject['Total_Relief_Dollars'] = impasse_by_subject['Total_Relief_Minutes'] * relief_rate / 60
+            impasse_by_subject['Avg_Relief_Dollars'] = impasse_by_subject['Avg_Relief_Minutes'] * relief_rate / 60
+            impasse_by_subject['Percentage_of_Impasse'] = (impasse_by_subject['Case_Count'] / total_impasse * 100).round(1)
+            
+            # Sort by case count
+            impasse_by_subject = impasse_by_subject.sort_values('Case_Count', ascending=False)
+            
+            # Create display dataframe with formatted values
+            impasse_display_df = impasse_by_subject.copy()
+            impasse_display_df['Total_Relief_Dollars'] = impasse_display_df['Total_Relief_Dollars'].apply(lambda x: f"${x:,.2f}")
+            impasse_display_df['Avg_Relief_Dollars'] = impasse_display_df['Avg_Relief_Dollars'].apply(lambda x: f"${x:,.2f}")
+            impasse_display_df['Percentage_of_Impasse'] = impasse_display_df['Percentage_of_Impasse'].apply(lambda x: f"{x}%")
+            
+            # Rename columns for display
+            impasse_display_df = impasse_display_df.rename(columns={
+                'Case_Count': 'Cases',
+                'Total_Relief_Minutes': 'Total Relief (Min)',
+                'Avg_Relief_Minutes': 'Avg Relief (Min)',
+                'Total_Relief_Dollars': 'Total Relief ($)',
+                'Avg_Relief_Dollars': 'Avg Relief ($)',
+                'Percentage_of_Impasse': '% of Impasse Cases'
+            })
+            
+            col1, col2 = st.columns([2, 1])
+            with col1:
+                st.dataframe(impasse_display_df, use_container_width=True)
+            with col2:
+                # Chart for impasse cases by subject
+                if len(impasse_by_subject) > 0:
+                    chart_data = impasse_by_subject.head(10).reset_index()
+                    fig = px.bar(chart_data, 
+                               x='Subject_Grouped', y='Case_Count',
+                               title="Top 10 Subject Groups by Impasse Cases",
+                               labels={'Case_Count': 'Number of Cases', 'Subject_Grouped': 'Subject Group'})
+                    fig.update_xaxes(tickangle=45)
+                    fig.update_layout(height=400)
+                    st.plotly_chart(fig, use_container_width=True)
+        
+        # ===== TRENDS OVER TIME =====
+        with st.expander("📈 Impasse Trends Over Time", expanded=True):
+            if 'date_submitted' in impasse_df.columns:
+                st.subheader("Time-Based Analysis")
+                
+                # Convert date_submitted to datetime
+                impasse_df['date_submitted'] = pd.to_datetime(impasse_df['date_submitted'], errors='coerce')
+                
+                # Group by month-year
+                impasse_df['month_year'] = impasse_df['date_submitted'].dt.to_period('M')
+                monthly_impasse = impasse_df.groupby('month_year').agg({
+                    'case_number': 'count',
+                    'relief_minutes': 'sum'
+                }).reset_index()
+                
+                monthly_impasse['month_year_str'] = monthly_impasse['month_year'].astype(str)
+                monthly_impasse['relief_dollars'] = monthly_impasse['relief_minutes'] * relief_rate / 60
+                
+                # Also calculate overall monthly submission rates for comparison
+                df_with_groups['date_submitted'] = pd.to_datetime(df_with_groups['date_submitted'], errors='coerce')
+                df_with_groups['month_year'] = df_with_groups['date_submitted'].dt.to_period('M')
+                monthly_total = df_with_groups.groupby('month_year').size().reset_index(name='total_cases')
+                monthly_total['month_year_str'] = monthly_total['month_year'].astype(str)
+                
+                # Merge for impasse rate calculation
+                monthly_trends = pd.merge(monthly_total, monthly_impasse, on='month_year_str', how='left')
+                monthly_trends['case_number'] = monthly_trends['case_number'].fillna(0)
+                monthly_trends['impasse_rate'] = (monthly_trends['case_number'] / monthly_trends['total_cases'] * 100).round(1)
+                
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    # Monthly impasse case count
+                    fig = px.line(monthly_impasse, x='month_year_str', y='case_number',
+                                title="Monthly Impasse Cases",
+                                labels={'case_number': 'Number of Cases', 'month_year_str': 'Month'})
+                    fig.update_xaxes(tickangle=45)
+                    st.plotly_chart(fig, use_container_width=True)
+                
+                with col2:
+                    # Monthly impasse rate
+                    fig = px.line(monthly_trends, x='month_year_str', y='impasse_rate',
+                                title="Monthly Impasse Rate (%)",
+                                labels={'impasse_rate': 'Impasse Rate (%)', 'month_year_str': 'Month'})
+                    fig.update_xaxes(tickangle=45)
+                    st.plotly_chart(fig, use_container_width=True)
+                
+                # Relief trends
+                st.subheader("Relief Value Trends")
+                fig = px.line(monthly_impasse, x='month_year_str', y='relief_dollars',
+                            title="Monthly Impasse Relief Value",
+                            labels={'relief_dollars': 'Relief Value ($)', 'month_year_str': 'Month'})
+                fig.update_xaxes(tickangle=45)
+                fig.update_yaxes(tickformat="$,.0f")
+                st.plotly_chart(fig, use_container_width=True)
+            else:
+                st.info("Date information not available for trend analysis.")
+        
+        # ===== IMPASSE RATES BY SUBJECT =====
+        with st.expander("🎯 Impasse Rates by Subject", expanded=True):
+            st.subheader("Subject-Specific Impasse Analysis")
+            
+            # Create tabs for grouped vs raw subjects
+            tab1, tab2 = st.tabs(["📊 Subject Groups", "📋 Raw Subjects"])
+            
+            with tab1:
+                st.markdown("**Impasse rates grouped by subject categories**")
+                
+                # Calculate impasse rates by subject groups
+                subject_totals_grouped = df_with_groups.groupby('Subject_Grouped').size()
+                subject_impasse_grouped = impasse_df.groupby('Subject_Grouped').size()
+                subject_rates_grouped = pd.DataFrame({
+                    'Total_Cases': subject_totals_grouped,
+                    'Impasse_Cases': subject_impasse_grouped
+                }).fillna(0)
+                
+                subject_rates_grouped['Impasse_Rate'] = (subject_rates_grouped['Impasse_Cases'] / subject_rates_grouped['Total_Cases'] * 100).round(1)
+                subject_rates_grouped = subject_rates_grouped[subject_rates_grouped['Total_Cases'] >= 5]  # Only subjects with 5+ cases
+                subject_rates_grouped = subject_rates_grouped.sort_values('Impasse_Rate', ascending=False)
+                
+                # Create display dataframe for grouped
+                subject_rates_grouped_display = subject_rates_grouped.copy()
+                subject_rates_grouped_display['Impasse_Rate'] = subject_rates_grouped_display['Impasse_Rate'].apply(lambda x: f"{x}%")
+                subject_rates_grouped_display = subject_rates_grouped_display.rename(columns={
+                    'Total_Cases': 'Total Cases',
+                    'Impasse_Cases': 'Impasse Cases',
+                    'Impasse_Rate': 'Impasse Rate'
+                })
+                
+                col1, col2 = st.columns([2, 1])
+                with col1:
+                    st.dataframe(subject_rates_grouped_display.head(20), use_container_width=True)
+                with col2:
+                    # Chart for grouped impasse rates
+                    if len(subject_rates_grouped) > 0:
+                        chart_data = subject_rates_grouped.head(15).reset_index()
+                        fig = px.bar(chart_data, 
+                                   x='Subject_Grouped', y='Impasse_Rate',
+                                   title="Top 15 Subject Groups by Impasse Rate",
+                                   labels={'Impasse_Rate': 'Impasse Rate (%)', 'Subject_Grouped': 'Subject Group'})
+                        fig.update_xaxes(tickangle=45)
+                        fig.update_layout(height=400)
+                        st.plotly_chart(fig, use_container_width=True)
+            
+            with tab2:
+                st.markdown("**Impasse rates by individual subject codes**")
+                
+                # Calculate impasse rates by raw subjects
+                subject_totals_raw = df_with_groups.groupby('subject').size()
+                subject_impasse_raw = impasse_df.groupby('subject').size()
+                subject_rates_raw = pd.DataFrame({
+                    'Total_Cases': subject_totals_raw,
+                    'Impasse_Cases': subject_impasse_raw
+                }).fillna(0)
+                
+                subject_rates_raw['Impasse_Rate'] = (subject_rates_raw['Impasse_Cases'] / subject_rates_raw['Total_Cases'] * 100).round(1)
+                subject_rates_raw = subject_rates_raw[subject_rates_raw['Total_Cases'] >= 3]  # Lower threshold for raw subjects
+                subject_rates_raw = subject_rates_raw.sort_values('Impasse_Rate', ascending=False)
+                
+                # Create display dataframe for raw
+                subject_rates_raw_display = subject_rates_raw.copy()
+                subject_rates_raw_display['Impasse_Rate'] = subject_rates_raw_display['Impasse_Rate'].apply(lambda x: f"{x}%")
+                subject_rates_raw_display = subject_rates_raw_display.rename(columns={
+                    'Total_Cases': 'Total Cases',
+                    'Impasse_Cases': 'Impasse Cases',
+                    'Impasse_Rate': 'Impasse Rate'
+                })
+                
+                col1, col2 = st.columns([2, 1])
+                with col1:
+                    st.dataframe(subject_rates_raw_display.head(25), use_container_width=True)
+                with col2:
+                    # Chart for raw impasse rates
+                    if len(subject_rates_raw) > 0:
+                        chart_data = subject_rates_raw.head(20).reset_index()
+                        fig = px.bar(chart_data, 
+                                   x='subject', y='Impasse_Rate',
+                                   title="Top 20 Individual Subjects by Impasse Rate",
+                                   labels={'Impasse_Rate': 'Impasse Rate (%)', 'subject': 'Subject'})
+                        fig.update_xaxes(tickangle=45)
+                        fig.update_layout(height=400)
+                        st.plotly_chart(fig, use_container_width=True)
+        
+        # ===== DETAILED CASE LISTING =====
+        with st.expander("📋 Detailed Impasse Case Listing", expanded=False):
+            st.subheader("All Impasse Cases")
+            
+            # Display options
+            col1, col2 = st.columns(2)
+            with col1:
+                sort_by = st.selectbox("Sort by:", 
+                                     options=['Date Submitted', 'Relief Value', 'Subject', 'Pilot'],
+                                     index=0)
+            with col2:
+                ascending = st.checkbox("Ascending order", value=False)
+            
+            # Prepare display dataframe
+            display_cols = ['case_number', 'pilot', 'subject', 'date_submitted', 'relief_minutes']
+            if 'relief_dollars' in impasse_df.columns:
+                display_cols.append('relief_dollars')
+            
+            impasse_detail_df = impasse_df[display_cols].copy()
+            
+            # Add formatted relief dollars if not present
+            if 'relief_dollars' not in impasse_detail_df.columns and 'relief_minutes' in impasse_detail_df.columns:
+                impasse_detail_df['relief_dollars'] = impasse_detail_df['relief_minutes'] * relief_rate / 60
+            
+            # Sort based on selection
+            if sort_by == 'Date Submitted' and 'date_submitted' in impasse_detail_df.columns:
+                impasse_detail_df = impasse_detail_df.sort_values('date_submitted', ascending=ascending)
+            elif sort_by == 'Relief Value' and 'relief_dollars' in impasse_detail_df.columns:
+                impasse_detail_df = impasse_detail_df.sort_values('relief_dollars', ascending=ascending)
+            elif sort_by == 'Subject':
+                impasse_detail_df = impasse_detail_df.sort_values('subject', ascending=ascending)
+            elif sort_by == 'Pilot':
+                impasse_detail_df = impasse_detail_df.sort_values('pilot', ascending=ascending)
+            
+            # Format for display
+            if 'relief_dollars' in impasse_detail_df.columns:
+                impasse_detail_df['relief_dollars'] = impasse_detail_df['relief_dollars'].apply(lambda x: f"${x:,.2f}")
+            
+            st.dataframe(impasse_detail_df, use_container_width=True)
+            
+            # Export option
+            if st.button("Export Impasse Cases to CSV"):
+                csv = impasse_detail_df.to_csv(index=False)
+                st.download_button(
+                    label="Download CSV",
+                    data=csv,
+                    file_name=f"impasse_cases_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                    mime="text/csv"
+                )
+        
+    else:
+        st.info("✅ **No impasse cases found in the current dataset.**")
+        st.markdown("""
+        **This is generally positive!** No cases are currently at impasse, which suggests:
+        - Effective case resolution processes
+        - Good communication between parties
+        - Clear policies and procedures
+        - Efficient dispute resolution mechanisms
+        """)
 
 if __name__ == "__main__":
     main()
