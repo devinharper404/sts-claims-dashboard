@@ -2980,34 +2980,22 @@ def main():
         # Format the timestamp
         formatted_time = last_updated.strftime("%B %d, %Y at %I:%M %p")
         
-        # Create banner with different colors based on data source
-        if data_source == 'uploaded':
-            source_icon = "📄"
-            source_text = "CSV Upload"
-            banner_color = "#E8F5E8"  # Light green
-        elif data_source == 'manual':
-            source_icon = "✏️"
-            source_text = "Manual Entry"
-            banner_color = "#E8F4FD"  # Light blue
-        else:
-            source_icon = "🔗"
-            source_text = "Data Collection"
-            banner_color = "#FFF8E1"  # Light yellow
-        
         st.markdown(f"""
         <div style="
-            background-color: {banner_color}; 
-            padding: 10px 15px; 
-            border-radius: 5px; 
-            border-left: 4px solid #2E8B57;
-            margin: 10px 0px;
+            background-color: #1E7E34; 
+            color: #FFFFFF;
+            padding: 12px 16px; 
+            border-radius: 6px; 
+            border-left: 5px solid #28A745;
+            margin: 15px 0px;
             display: flex;
             align-items: center;
-            font-size: 14px;
+            font-size: 15px;
+            font-weight: 500;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
         ">
-            <span style="margin-right: 8px;">{source_icon}</span>
-            <strong>Last Updated:</strong>&nbsp;{formatted_time}&nbsp;&nbsp;|&nbsp;&nbsp;
-            <strong>Source:</strong>&nbsp;{source_text}
+            <span style="margin-right: 10px; font-size: 16px;">🕒</span>
+            <strong>Last Updated:</strong>&nbsp;{formatted_time}
         </div>
         """, unsafe_allow_html=True)
     
