@@ -9,6 +9,12 @@ import statistics
 import re
 import os
 import platform
+from selenium import webdriver
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.chrome.options import Options
+from selenium.common.exceptions import NoSuchElementException, TimeoutException
 import warnings
 warnings.filterwarnings('ignore')
 
@@ -887,14 +893,6 @@ def generate_demo_data():
             else:  # 15% chance to be impasse
                 status = 'impasse'
         
-        # Generate realistic rotation data
-        rot_bases = ['CDW', 'LAX', 'DFW', 'JFK', 'LGA', 'ATL', 'BOS', 'SEA', 'PHX', 'DEN']
-        rot_starts = ['01', '02', '03', '04', '05', '06', '07', '08', '09', '10', '11', '12', '13', '14', '15']
-        rot_numbers = ['1', '2', '3', '4', '5', '6', '7', '8']
-        
-        # Some cases may not have rotation data (realistic scenario)
-        has_rotation = np.random.choice([True, False], p=[0.7, 0.3])  # 70% have rotation data
-        
         data.append({
             'case_number': f'STS-{2024}-{i+1:04d}',
             'pilot': pilot,
@@ -907,11 +905,7 @@ def generate_demo_data():
             'decision_date': decision_date.strftime('%Y-%m-%d') if decision_date else '',
             'processing_days': (decision_date - submission_date).days if decision_date else None,
             'violation_type': np.random.choice(['Type A', 'Type B', 'Type C', 'Type D']),
-            'probability_of_payment': np.random.uniform(0.1, 0.9),
-            # Add rotation fields
-            'rot_base': np.random.choice(rot_bases) if has_rotation else '',
-            'rot_start': np.random.choice(rot_starts) if has_rotation else '',
-            'rot_number': np.random.choice(rot_numbers) if has_rotation else ''
+            'probability_of_payment': np.random.uniform(0.1, 0.9)
         })
     
     return pd.DataFrame(data)
@@ -2180,27 +2174,6 @@ def show_claims_details_tab():
     with col3:
         min_relief = st.number_input("Minimum Relief Amount", value=0.0, step=100.0)
     
-    # Additional filters for rotation fields (if available)
-    rotation_filters = {}
-    if any(field in df.columns for field in ['rot_base', 'rot_start', 'rot_number']):
-        st.subheader("🔄 Rotation Filters")
-        rot_col1, rot_col2, rot_col3 = st.columns(3)
-        
-        with rot_col1:
-            if 'rot_base' in df.columns:
-                rot_base_options = ['All'] + [str(x) for x in sorted(df['rot_base'].dropna().unique()) if x]
-                rotation_filters['rot_base'] = st.selectbox("Filter by Rot. Base", options=rot_base_options)
-        
-        with rot_col2:
-            if 'rot_start' in df.columns:
-                rot_start_options = ['All'] + [str(x) for x in sorted(df['rot_start'].dropna().unique()) if x]
-                rotation_filters['rot_start'] = st.selectbox("Filter by Rot. Start", options=rot_start_options)
-        
-        with rot_col3:
-            if 'rot_number' in df.columns:
-                rot_num_options = ['All'] + [str(x) for x in sorted(df['rot_number'].dropna().unique()) if x]
-                rotation_filters['rot_number'] = st.selectbox("Filter by Rot. #", options=rot_num_options)
-    
     # Apply filters
     filtered_df = df.copy()
     
@@ -2212,82 +2185,11 @@ def show_claims_details_tab():
     
     filtered_df = filtered_df[filtered_df['relief_dollars'] >= min_relief]
     
-    # Apply rotation filters
-    for field, filter_value in rotation_filters.items():
-        if filter_value != 'All' and field in filtered_df.columns:
-            filtered_df = filtered_df[filtered_df[field].astype(str) == filter_value]
-    
     # Add HH:MM format to display if not already present
     if 'relief_hhmm' not in filtered_df.columns and 'relief_minutes' in filtered_df.columns:
         filtered_df['relief_hhmm'] = filtered_df['relief_minutes'].apply(minutes_to_hhmm)
     
     st.write(f"Showing {len(filtered_df)} of {len(df)} claims")
-    
-    # === ROTATION FIELDS SUMMARY ===
-    rotation_fields_available = [field for field in ['rot_base', 'rot_start', 'rot_number'] if field in df.columns]
-    if rotation_fields_available:
-        with st.expander("🔄 Rotation Fields Summary", expanded=False):
-            st.subheader("Rotation Data Overview")
-            
-            col1, col2, col3 = st.columns(3)
-            
-            if 'rot_base' in df.columns:
-                with col1:
-                    unique_bases = len(df['rot_base'].dropna().unique())
-                    total_with_base = len(df[df['rot_base'].notna() & (df['rot_base'] != '')])
-                    st.metric("Unique Rotation Bases", unique_bases, f"{total_with_base} cases have base data")
-                    
-                    if unique_bases > 0:
-                        base_counts = df['rot_base'].value_counts().head(5)
-                        st.write("**Top 5 Bases:**")
-                        for base, count in base_counts.items():
-                            st.write(f"• {base}: {count} cases")
-            
-            if 'rot_start' in df.columns:
-                with col2:
-                    unique_starts = len(df['rot_start'].dropna().unique())
-                    total_with_start = len(df[df['rot_start'].notna() & (df['rot_start'] != '')])
-                    st.metric("Unique Rotation Starts", unique_starts, f"{total_with_start} cases have start data")
-                    
-                    if unique_starts > 0:
-                        start_counts = df['rot_start'].value_counts().head(5)
-                        st.write("**Top 5 Starts:**")
-                        for start, count in start_counts.items():
-                            st.write(f"• {start}: {count} cases")
-            
-            if 'rot_number' in df.columns:
-                with col3:
-                    unique_numbers = len(df['rot_number'].dropna().unique())
-                    total_with_number = len(df[df['rot_number'].notna() & (df['rot_number'] != '')])
-                    st.metric("Unique Rotation Numbers", unique_numbers, f"{total_with_number} cases have number data")
-                    
-                    if unique_numbers > 0:
-                        number_counts = df['rot_number'].value_counts().head(5)
-                        st.write("**Top 5 Numbers:**")
-                        for number, count in number_counts.items():
-                            st.write(f"• {number}: {count} cases")
-            
-            # Combined rotation analysis
-            if len(rotation_fields_available) >= 2:
-                st.subheader("Combined Rotation Analysis")
-                
-                # Cases with complete rotation data
-                complete_rotation_mask = True
-                for field in rotation_fields_available:
-                    complete_rotation_mask &= (df[field].notna() & (df[field] != ''))
-                
-                complete_rotation_cases = len(df[complete_rotation_mask])
-                completion_rate = (complete_rotation_cases / len(df) * 100) if len(df) > 0 else 0
-                
-                col1, col2 = st.columns(2)
-                with col1:
-                    st.metric("Complete Rotation Data", f"{complete_rotation_cases} cases", f"{completion_rate:.1f}% of total")
-                
-                with col2:
-                    partial_rotation_cases = len(df) - complete_rotation_cases
-                    st.metric("Partial/Missing Rotation Data", f"{partial_rotation_cases} cases")
-    else:
-        st.info("ℹ️ No rotation fields detected in the current dataset. Upload data with rot_base, rot_start, and rot_number columns to see rotation analysis.")
     
     # Reorder columns to show HH:MM prominently
     display_columns = ['case_number', 'pilot', 'subject', 'status']
@@ -2295,29 +2197,12 @@ def show_claims_details_tab():
         display_columns.append('relief_hhmm')
     if 'relief_dollars' in filtered_df.columns:
         display_columns.append('relief_dollars')
-    
-    # Add rotation fields if available
-    rotation_fields = ['rot_base', 'rot_start', 'rot_number']
-    for field in rotation_fields:
-        if field in filtered_df.columns:
-            display_columns.append(field)
-    
     display_columns.extend([col for col in filtered_df.columns if col not in display_columns])
     
     # Format relief_dollars for display
     display_df = filtered_df[display_columns].copy()
     if 'relief_dollars' in display_df.columns:
         display_df['relief_dollars'] = display_df['relief_dollars'].apply(lambda x: f"${x:,.2f}")
-    
-    # Rename rotation columns for better display
-    column_renames = {
-        'rot_base': 'Rot. Base',
-        'rot_start': 'Rot. Start', 
-        'rot_number': 'Rot. #'
-    }
-    for old_name, new_name in column_renames.items():
-        if old_name in display_df.columns:
-            display_df = display_df.rename(columns={old_name: new_name})
     
     st.dataframe(display_df, use_container_width=True)
     
@@ -2461,60 +2346,174 @@ def show_claims_details_tab():
             mime="text/csv"
         )
 
-def main():
-    """Main dashboard application"""
+def scrape_sts_data():
+    """Scrape STS data with comprehensive monitoring"""
+    # Check if we're in a cloud environment where Selenium won't work
+    is_cloud_env = (
+        os.environ.get('STREAMLIT_SHARING') or 
+        os.environ.get('HEROKU') or 
+        os.environ.get('RENDER') or
+        'streamlit.app' in os.environ.get('HOSTNAME', '') or
+        platform.system() == 'Linux' and '/home/appuser' in os.environ.get('HOME', '')
+    )
     
-    # Check password first
-    if not check_password():
-        return
+    if is_cloud_env:
+        st.error("🚫 **Data Collection Not Available in Cloud Environment**")
+        st.warning("""
+        **Browser automation (Selenium) cannot run in hosted environments like Streamlit Cloud.**
+        
+        **To use data collection:**
+        1. **Run locally**: Download and run this dashboard on your local machine
+        2. **Use demo mode**: Toggle "Demo Mode" to see the dashboard with sample data
+        3. **Manual upload**: Export data from your local script and upload it
+        
+        **For now, please enable Demo Mode to explore the dashboard features.**
+        """)
+        return False
     
-    # Header
-    st.markdown('<h1 class="main-header">STS Claims Analytics Dashboard</h1>', unsafe_allow_html=True)
+    if st.session_state.collection_status['running']:
+        st.warning("Data collection is already in progress.")
+        return False
     
-    # Sidebar controls
-    with st.sidebar:
-        st.header("🎛️ Dashboard Controls")
+    # Initialize collection status
+    st.session_state.collection_status = {
+        'running': True,
+        'current_step': 'Initializing...',
+        'claims_found': 0,
+        'pages_processed': 0,
+        'start_time': datetime.now(),
+        'export_file': None
+    }
+    
+    # UI for monitoring
+    st.subheader("📊 Data Collection Progress")
+    progress_bar = st.progress(0)
+    status_text = st.empty()
+    
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        claims_metric = st.empty()
+    with col2:
+        pages_metric = st.empty()
+    with col3:
+        time_metric = st.empty()
+    
+    try:
+        # Setup Chrome options
+        chrome_options = Options()
+        chrome_options.add_argument("--headless")
+        chrome_options.add_argument("--no-sandbox")
+        chrome_options.add_argument("--disable-dev-shm-usage")
+        chrome_options.add_argument("--disable-gpu")
+        chrome_options.add_argument("--window-size=1920,1080")
         
-        # Demo mode toggle
-        demo_mode = st.toggle("Demo Mode", value=st.session_state.get('demo_mode', False))
-        st.session_state.demo_mode = demo_mode
+        st.session_state.collection_status['current_step'] = 'Starting browser...'
+        status_text.text("Starting browser...")
         
-        if demo_mode:
-            st.info("📊 **Demo Mode Active**\n\nUsing sample data for demonstration.")
-            # Add button to regenerate demo data
-            if st.button("🔄 Regenerate Demo Data", help="Generate new random demo data"):
-                if 'demo_data_base' in st.session_state:
-                    del st.session_state['demo_data_base']  # Clear cached demo data
-                st.rerun()
-        else:
-            st.info("🔴 **Production Mode**\n\nReady for live data collection.")
+        driver = webdriver.Chrome(options=chrome_options)
+        # Updated URL to match working script
+        driver.get("https://sts2.alpa.org/adfs/ls/?wa=wsignin1.0&wtrealm=https%3a%2f%2fdal.alpa.org&wctx=rm%3d0%26id%3d65788f3a-90df-4c13-b375-f2e8ad524a11%26ru%3d%252fsts-admin&wct=2025-07-11T11%3a52%3a42Z&whr=https%3a%2f%2fdal.alpa.org&cfg=6")
+        time.sleep(3)
         
-        st.divider()
+        # Wait for login elements - updated IDs to match working script
+        st.session_state.collection_status['current_step'] = 'Waiting for login page...'
+        status_text.text("Waiting for login page...")
         
-        # Configuration section
-        st.subheader("⚙️ Configuration")
+        wait = WebDriverWait(driver, 20)
+        username_input = wait.until(EC.presence_of_element_located((By.ID, "userNameInput")))
+        password_input = driver.find_element(By.ID, "passwordInput")
+        login_button = driver.find_element(By.ID, "submitButton")
         
-        # File selection
-        st.write("**Data Source**")
-        uploaded_file = st.file_uploader(
-            "Upload CSV file",
-            type=['csv'],
-            help="Upload your STS claims data CSV file"
-        )
+        # Login credentials - updated to match working script
+        username_input.send_keys("N0000937")
+        password_input.send_keys("STSD@L!42AlPa14")
         
-        # Display options
-        st.write("**Display Options**")
-        show_details = st.checkbox("Show detailed case information", value=True)
-        show_rotation_fields = st.checkbox("Show rotation fields", value=True)
+        st.session_state.collection_status['current_step'] = 'Logging in...'
+        status_text.text("Logging in...")
         
-        # Auto-refresh option
-        auto_refresh = st.checkbox("Enable auto-refresh", value=False)
-        if auto_refresh:
-            refresh_interval = st.slider("Refresh interval (minutes)", 1, 60, 5)
-
-# Main content area
-if __name__ == "__main__":
-    main()
+        login_button.click()
+        time.sleep(5)
+        
+        # Navigate to claims page after login
+        driver.get("https://dal.alpa.org/sts-admin/claims")
+        
+        # Wait for page to load and set up filters like in working script
+        st.session_state.collection_status['current_step'] = 'Setting up filters...'
+        status_text.text("Setting up filters...")
+        
+        # Click Sort & Filter button
+        sort_filter_button = wait.until(EC.element_to_be_clickable((By.XPATH, "/html/body/form/div[3]/div/div/div/div/div/div/main/div[1]/div[1]/div[2]/div[1]/div/div[2]/button[2]")))
+        driver.execute_script("arguments[0].scrollIntoView(true);", sort_filter_button)
+        sort_filter_button.click()
+        time.sleep(2)
+        
+        # Click Add All button
+        try:
+            add_all_button = wait.until(EC.element_to_be_clickable((By.XPATH, "/html/body/form/div[3]/div/div/div/div/div/div/main/div[1]/div[1]/div[2]/div[6]/div[1]/div[1]/div/div[3]/div/div/div[1]/fieldset/div[4]/button[1]")))
+            driver.execute_script("arguments[0].scrollIntoView(true);", add_all_button)
+            add_all_button.click()
+            time.sleep(1)
+        except Exception as e:
+            st.warning(f"Could not click 'Add All': {e}")
+        
+        # Click Apply button
+        try:
+            apply_button = wait.until(EC.element_to_be_clickable((By.XPATH, "/html/body/form/div[3]/div/div/div/div/div/div/main/div[1]/div[1]/div[2]/div[6]/div[1]/div[2]/div[2]/button[2]")))
+            driver.execute_script("arguments[0].scrollIntoView(true);", apply_button)
+            apply_button.click()
+            time.sleep(2)
+        except Exception as e:
+            st.warning(f"Could not click 'Apply': {e}")
+        
+        time.sleep(5)
+        
+        # Set results per page to 50
+        try:
+            per_page_dropdown = wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "select.form-select")))
+            driver.execute_script("arguments[0].scrollIntoView(true);", per_page_dropdown)
+            if per_page_dropdown.get_attribute("value") != "50":
+                per_page_dropdown.click()
+                option_50 = per_page_dropdown.find_element(By.XPATH, ".//option[@value='50']")
+                option_50.click()
+                time.sleep(3)
+        except Exception as e:
+            st.warning(f"Could not set results per page to 50: {e}")
+        
+        # Wait for dashboard - updated to match new structure
+        wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "table tbody tr")))
+        
+        # Start collecting ticket URLs like in working script
+        st.session_state.collection_status['current_step'] = 'Collecting ticket URLs...'
+        status_text.text("Collecting ticket URLs...")
+        
+        all_tickets = []
+        processed_tickets = set()
+        
+        # Collect data from all pages
+        claims_data = []
+        page_num = 1
+        consecutive_errors = 0
+        max_consecutive_errors = 3
+        
+        while True:
+            try:
+                st.session_state.collection_status['current_step'] = f'Processing page {page_num}...'
+                st.session_state.collection_status['pages_processed'] = page_num
+                status_text.text(f"Processing page {page_num}...")
+                pages_metric.metric("Pages Processed", page_num)
+                
+                # Get table data with retry logic
+                table = wait.until(EC.presence_of_element_located((By.ID, "claimsTable")))
+                rows = table.find_elements(By.TAG_NAME, "tr")[1:]  # Skip header
+                
+                page_claims = 0
+                for row in rows:
+                    try:
+                        cells = row.find_elements(By.TAG_NAME, "td")
+                        if len(cells) >= 6:  # Minimum required columns
+                            # More flexible column extraction
+                            case_number = cells[0].text.strip() if len(cells) > 0 else ''
+                            pilot = cells[1].text.strip() if len(cells) > 1 else ''
                             subject = cells[2].text.strip() if len(cells) > 2 else ''
                             status = cells[3].text.strip() if len(cells) > 3 else ''
                             submission_date = cells[4].text.strip() if len(cells) > 4 else ''
@@ -2532,83 +2531,8 @@ if __name__ == "__main__":
                             
                             processing_days = cells[7].text.strip() if len(cells) > 7 else ''
                             
-                            # Initialize rotation fields
-                            rot_base = ''
-                            rot_start = ''
-                            rot_number = ''
-                            
-                            # Get rotation data from case detail if relief > 0
+                            # Only include claims with positive relief
                             if relief_minutes > 0 and case_number:
-                                try:
-                                    # Click on case number to go to detail page
-                                    case_link = cells[0].find_element(By.TAG_NAME, "a")
-                                    case_link.click()
-                                    time.sleep(2)
-                                    
-                                    # Wait for case detail page to load
-                                    wait.until(EC.presence_of_element_located((By.CLASS_NAME, "card-body")))
-                                    
-                                    # Extract rotation fields from case detail
-                                    try:
-                                        # Look for rotation fields in the case detail
-                                        # These might be in various formats, so we'll try multiple approaches
-                                        
-                                        # Method 1: Look for labeled fields
-                                        page_source = driver.page_source
-                                        
-                                        # Search for Rot. Base
-                                        import re
-                                        rot_base_match = re.search(r'Rot\.\s*Base[:\s]*([A-Za-z0-9]{1,5})', page_source, re.IGNORECASE)
-                                        if rot_base_match:
-                                            rot_base = rot_base_match.group(1).strip()
-                                        
-                                        # Search for Rot. Start
-                                        rot_start_match = re.search(r'Rot\.\s*Start[:\s]*([A-Za-z0-9]{1,5})', page_source, re.IGNORECASE)
-                                        if rot_start_match:
-                                            rot_start = rot_start_match.group(1).strip()
-                                        
-                                        # Search for Rot. # or Rot. Number
-                                        rot_number_match = re.search(r'Rot\.\s*#?[:\s]*([A-Za-z0-9]{1,5})', page_source, re.IGNORECASE)
-                                        if rot_number_match:
-                                            rot_number = rot_number_match.group(1).strip()
-                                        
-                                        # Method 2: Try to find specific form fields or table cells
-                                        try:
-                                            # Look for input fields or table cells that might contain rotation data
-                                            form_elements = driver.find_elements(By.CSS_SELECTOR, "input, td, span, div")
-                                            for element in form_elements:
-                                                element_text = element.get_attribute("value") or element.text
-                                                element_id = element.get_attribute("id") or ""
-                                                element_name = element.get_attribute("name") or ""
-                                                
-                                                # Check if this element contains rotation data
-                                                if any(keyword in (element_id + element_name).lower() for keyword in ['rot', 'rotation']):
-                                                    if 'base' in (element_id + element_name).lower() and not rot_base:
-                                                        rot_base = element_text[:5]  # Limit to 5 characters
-                                                    elif 'start' in (element_id + element_name).lower() and not rot_start:
-                                                        rot_start = element_text[:5]
-                                                    elif ('number' in (element_id + element_name).lower() or 
-                                                          element_id.lower().endswith('rot') or 
-                                                          element_name.lower().endswith('rot')) and not rot_number:
-                                                        rot_number = element_text[:5]
-                                        except:
-                                            pass  # Continue if this method fails
-                                            
-                                    except Exception as rotation_error:
-                                        # If rotation extraction fails, continue with empty values
-                                        pass
-                                    
-                                    # Navigate back to the main page
-                                    driver.back()
-                                    time.sleep(1)
-                                    
-                                    # Wait for the table to reload
-                                    wait.until(EC.presence_of_element_located((By.ID, "claimsTable")))
-                                    
-                                except Exception as detail_error:
-                                    # If clicking into detail fails, continue without rotation data
-                                    pass
-                                
                                 claims_data.append({
                                     'case_number': case_number,
                                     'pilot': pilot,
@@ -2618,10 +2542,7 @@ if __name__ == "__main__":
                                     'decision_date': decision_date,
                                     'relief_minutes': relief_minutes,
                                     'relief_dollars': relief_dollars(relief_minutes),
-                                    'processing_days': processing_days,
-                                    'rot_base': rot_base,
-                                    'rot_start': rot_start,
-                                    'rot_number': rot_number
+                                    'processing_days': processing_days
                                 })
                                 page_claims += 1
                     except Exception as e:
@@ -2840,12 +2761,10 @@ def main():
                     
                     # Validate columns
                     required_cols = ['case_number', 'pilot', 'subject', 'status']
-                    optional_cols = ['relief_minutes', 'relief_dollars', 'relief_requested', 'submission_date', 'rot_base', 'rot_start', 'rot_number']
-                    rotation_cols = ['rot_base', 'rot_start', 'rot_number']
+                    optional_cols = ['relief_minutes', 'relief_dollars', 'relief_requested', 'submission_date']
                     
                     missing_required = [col for col in required_cols if col not in df_upload.columns]
                     available_optional = [col for col in optional_cols if col in df_upload.columns]
-                    available_rotation = [col for col in rotation_cols if col in df_upload.columns]
                     
                     if missing_required:
                         st.error(f"❌ Missing required columns: {missing_required}")
@@ -2853,23 +2772,11 @@ def main():
                     else:
                         st.success("✅ All required columns found!")
                         
-                        col1, col2, col3 = st.columns(3)
+                        col1, col2 = st.columns(2)
                         with col1:
                             st.metric("Total Records", len(df_upload))
                         with col2:
                             st.metric("Available Optional Columns", len(available_optional))
-                        with col3:
-                            if available_rotation:
-                                st.metric("Rotation Fields Found", f"{len(available_rotation)}/3", 
-                                         help=f"Found: {', '.join(available_rotation)}")
-                            else:
-                                st.metric("Rotation Fields", "0/3", help="No rotation fields detected")
-                        
-                        # Display rotation field status
-                        if available_rotation:
-                            st.success(f"🔄 **Rotation fields detected:** {', '.join(available_rotation)}")
-                        else:
-                            st.info("ℹ️ **No rotation fields found.** Rotation fields (rot_base, rot_start, rot_number) are optional.")
                         
                         # Handle relief data - check for relief_requested first
                         if 'relief_requested' in df_upload.columns and 'relief_minutes' not in df_upload.columns:
@@ -3023,12 +2930,7 @@ python sts_totalpackage_v2_Version5_Version2.py
             st.write("Your CSV should have these columns:")
             st.json({
                 "required": ["case_number", "pilot", "subject", "status"],
-                "optional": ["relief_minutes", "relief_dollars", "submission_date", "rot_base", "rot_start", "rot_number"],
-                "rotation_fields": {
-                    "rot_base": "Rotation base (e.g., CDW, LAX, JFK)",
-                    "rot_start": "Rotation start (e.g., 01, 02, 03)",
-                    "rot_number": "Rotation number (e.g., 1, 2, 3)"
-                },
+                "optional": ["relief_minutes", "relief_dollars", "submission_date"],
                 "example_data": {
                     "case_number": "12345",
                     "pilot": "N123456", 
@@ -3036,10 +2938,7 @@ python sts_totalpackage_v2_Version5_Version2.py
                     "status": "approved",
                     "relief_minutes": 120,
                     "relief_dollars": 640.94,
-                    "submission_date": "2025-01-15",
-                    "rot_base": "CDW",
-                    "rot_start": "01",
-                    "rot_number": "1"
+                    "submission_date": "2025-01-15"
                 }
             })
             
@@ -3056,10 +2955,7 @@ python sts_totalpackage_v2_Version5_Version2.py
                 'relief_requested': ['02:00', '01:00', '03:00'],  # HH:MM format
                 'relief_minutes': [120, 60, 180],  # Optional - will be calculated if missing
                 'relief_dollars': [640.94, 320.47, 961.41],  # Optional - will be calculated if missing
-                'submission_date': ['2025-01-15', '2025-01-16', '2025-01-17'],
-                'rot_base': ['CDW', 'LAX', 'JFK'],  # Rotation base - optional
-                'rot_start': ['01', '02', '03'],    # Rotation start - optional
-                'rot_number': ['1', '2', '3']       # Rotation number - optional
+                'submission_date': ['2025-01-15', '2025-01-16', '2025-01-17']
             }
             template_df = pd.DataFrame(template_data)
             
@@ -3069,7 +2965,7 @@ python sts_totalpackage_v2_Version5_Version2.py
                 data=csv_template,
                 file_name="sts_claims_template.csv",
                 mime="text/csv",
-                help="Template includes rotation fields (rot_base, rot_start, rot_number) and relief_requested in HH:MM format. Dashboard will auto-calculate missing fields."
+                help="Template shows relief_requested in HH:MM format. Dashboard will auto-calculate minutes/dollars if missing."
             )
         
         st.divider()
@@ -3099,17 +2995,17 @@ python sts_totalpackage_v2_Version5_Version2.py
                 """)
                 st.info("**💡 Tip:** Enable Demo Mode above to explore the dashboard with sample data!")
             else:
-                st.warning("⚠️ **Data Collection Feature Moved**")
-                st.info("""
-                **Data collection has been moved to the separate script: `generate_dashboard_data.py`**
-                
-                **To collect data:**
-                1. Run the `generate_dashboard_data.py` script separately
-                2. Upload the generated CSV file using the file uploader below
-                3. Use the dashboard to analyze your data
-                
-                **For now, enable Demo Mode to explore the dashboard features.**
-                """)
+                if not st.session_state.get('data_collected', False):
+                    st.warning("⚠️ No data collected yet")
+                    if st.button("🚀 Start Data Collection", type="primary"):
+                        scrape_sts_data()
+                else:
+                    st.success("✅ Data collected successfully")
+                    df = st.session_state.get('collected_data', pd.DataFrame())
+                    st.metric("Claims Collected", len(df))
+                    
+                    if st.button("🔄 Refresh Data"):
+                        scrape_sts_data()
         
         st.divider()
         
@@ -3467,7 +3363,7 @@ def show_executive_dashboard_tab():
                     with col_a:
                         st.metric("🔟 Top 10 Cost", f"${total_top10_cost:,.0f}")
                     with col_b:
-                        st.metric("� Total Open Cost", f"${total_open_cost:,.0f}")
+                        st.metric("  Total Open Cost", f"${total_open_cost:,.0f}")
                     with col_c:
                         st.metric("📈 Top 10 Share", f"{top10_percentage:.1f}%")
                     
