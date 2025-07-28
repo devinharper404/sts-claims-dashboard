@@ -1429,7 +1429,7 @@ def show_analytics_tab():
                      f"${analytics.get('total_relief_all_subjects', 0):,.2f}")
         
         # ===== VIOLATION TYPE ANALYSIS =====
-        st.subheader("⚖️ Violation Type Analysis")
+        st.subheader("Violation Type Analysis")
         
         # Create tabs for raw vs grouped violations
         tab1, tab2 = st.tabs(["📋 Raw Violations", "📊 Grouped Violations"])
@@ -1668,7 +1668,7 @@ def show_analytics_tab():
         
         # ===== TOP 10 PILOTS BY CASE COUNT =====
         if analytics.get('top_10_pilots_by_cases'):
-            st.subheader("🔟 Top 10 Pilots by Number of Cases Submitted")
+            st.subheader("Top 10 Pilots by Number of Cases Submitted")
             top10_pilots_df = pd.DataFrame([
                 {'Rank': i+1, 'Pilot Employee #': pilot, 'Case Count': count}
                 for i, (pilot, count) in enumerate(analytics['top_10_pilots_by_cases'].items())
@@ -1964,7 +1964,7 @@ def show_analytics_tab():
                 st.plotly_chart(fig, use_container_width=True)
         
         # ===== IMPASSE ANALYTICS SECTION =====
-        st.subheader("⚖️ Impasse Case Analytics")
+        st.subheader("Impasse Case Analytics")
         
         # Add Subject_Grouped column to dataframe for impasse analysis
         df_with_groups = df.copy()
@@ -2106,7 +2106,7 @@ def show_analytics_tab():
                 st.plotly_chart(fig, use_container_width=True)
             
             # Impasse rate by subject comparison
-            st.subheader("⚖️ Impasse Rates by Subject")
+            st.subheader("Impasse Rates by Subject")
             
             # Create tabs for grouped vs raw subjects
             tab1, tab2 = st.tabs(["📊 Subject Groups", "📋 Raw Subjects"])
@@ -3533,7 +3533,7 @@ def show_executive_dashboard_tab():
         
         with col8:
             st.metric(
-                "⚖️ Impasse Cases",
+                "Impasse Cases",
                 f"{impasse_cases:,}",
                 f"{(impasse_cases/total_cases*100):.1f}% of total" if total_cases > 0 else "0%"
             )
