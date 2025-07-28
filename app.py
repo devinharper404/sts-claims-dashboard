@@ -9,12 +9,6 @@ import statistics
 import re
 import os
 import platform
-from selenium import webdriver
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
-from selenium.webdriver.chrome.options import Options
-from selenium.common.exceptions import NoSuchElementException, TimeoutException
 import warnings
 warnings.filterwarnings('ignore')
 
@@ -2174,6 +2168,27 @@ def show_claims_details_tab():
     with col3:
         min_relief = st.number_input("Minimum Relief Amount", value=0.0, step=100.0)
     
+    # Additional filters for rotation fields (if available)
+    rotation_filters = {}
+    if any(field in df.columns for field in ['rot_base', 'rot_start', 'rot_number']):
+        st.subheader("🔄 Rotation Filters")
+        rot_col1, rot_col2, rot_col3 = st.columns(3)
+        
+        with rot_col1:
+            if 'rot_base' in df.columns:
+                rot_base_options = ['All'] + [str(x) for x in sorted(df['rot_base'].dropna().unique()) if x]
+                rotation_filters['rot_base'] = st.selectbox("Filter by Rot. Base", options=rot_base_options)
+        
+        with rot_col2:
+            if 'rot_start' in df.columns:
+                rot_start_options = ['All'] + [str(x) for x in sorted(df['rot_start'].dropna().unique()) if x]
+                rotation_filters['rot_start'] = st.selectbox("Filter by Rot. Start", options=rot_start_options)
+        
+        with rot_col3:
+            if 'rot_number' in df.columns:
+                rot_num_options = ['All'] + [str(x) for x in sorted(df['rot_number'].dropna().unique()) if x]
+                rotation_filters['rot_number'] = st.selectbox("Filter by Rot. #", options=rot_num_options)
+    
     # Apply filters
     filtered_df = df.copy()
     
@@ -2184,6 +2199,11 @@ def show_claims_details_tab():
         filtered_df = filtered_df[filtered_df['pilot'] == pilot_filter]
     
     filtered_df = filtered_df[filtered_df['relief_dollars'] >= min_relief]
+    
+    # Apply rotation filters
+    for field, filter_value in rotation_filters.items():
+        if filter_value != 'All' and field in filtered_df.columns:
+            filtered_df = filtered_df[filtered_df[field].astype(str) == filter_value]
     
     # Add HH:MM format to display if not already present
     if 'relief_hhmm' not in filtered_df.columns and 'relief_minutes' in filtered_df.columns:
@@ -2197,12 +2217,29 @@ def show_claims_details_tab():
         display_columns.append('relief_hhmm')
     if 'relief_dollars' in filtered_df.columns:
         display_columns.append('relief_dollars')
+    
+    # Add rotation fields if available
+    rotation_fields = ['rot_base', 'rot_start', 'rot_number']
+    for field in rotation_fields:
+        if field in filtered_df.columns:
+            display_columns.append(field)
+    
     display_columns.extend([col for col in filtered_df.columns if col not in display_columns])
     
     # Format relief_dollars for display
     display_df = filtered_df[display_columns].copy()
     if 'relief_dollars' in display_df.columns:
         display_df['relief_dollars'] = display_df['relief_dollars'].apply(lambda x: f"${x:,.2f}")
+    
+    # Rename rotation columns for better display
+    column_renames = {
+        'rot_base': 'Rot. Base',
+        'rot_start': 'Rot. Start', 
+        'rot_number': 'Rot. #'
+    }
+    for old_name, new_name in column_renames.items():
+        if old_name in display_df.columns:
+            display_df = display_df.rename(columns={old_name: new_name})
     
     st.dataframe(display_df, use_container_width=True)
     
@@ -2346,47 +2383,18 @@ def show_claims_details_tab():
             mime="text/csv"
         )
 
-def scrape_sts_data():
-    """Scrape STS data with comprehensive monitoring"""
-    # Check if we're in a cloud environment where Selenium won't work
-    is_cloud_env = (
-        os.environ.get('STREAMLIT_SHARING') or 
-        os.environ.get('HEROKU') or 
-        os.environ.get('RENDER') or
-        'streamlit.app' in os.environ.get('HOSTNAME', '') or
-        platform.system() == 'Linux' and '/home/appuser' in os.environ.get('HOME', '')
-    )
+def main():
+    """Main dashboard application"""
     
-    if is_cloud_env:
-        st.error("🚫 **Data Collection Not Available in Cloud Environment**")
-        st.warning("""
-        **Browser automation (Selenium) cannot run in hosted environments like Streamlit Cloud.**
-        
-        **To use data collection:**
-        1. **Run locally**: Download and run this dashboard on your local machine
-        2. **Use demo mode**: Toggle "Demo Mode" to see the dashboard with sample data
-        3. **Manual upload**: Export data from your local script and upload it
-        
-        **For now, please enable Demo Mode to explore the dashboard features.**
-        """)
-        return False
+    # Check password first
+    if not check_password():
+        return
     
-    if st.session_state.collection_status['running']:
-        st.warning("Data collection is already in progress.")
-        return False
+    # Header
+    st.markdown('<h1 class="main-header">STS Claims Analytics Dashboard</h1>', unsafe_allow_html=True)
     
-    # Initialize collection status
-    st.session_state.collection_status = {
-        'running': True,
-        'current_step': 'Initializing...',
-        'claims_found': 0,
-        'pages_processed': 0,
-        'start_time': datetime.now(),
-        'export_file': None
-    }
-    
-    # UI for monitoring
-    st.subheader("📊 Data Collection Progress")
+    # Sidebar controls
+    with st.sidebar:
     progress_bar = st.progress(0)
     status_text = st.empty()
     
@@ -2531,8 +2539,83 @@ def scrape_sts_data():
                             
                             processing_days = cells[7].text.strip() if len(cells) > 7 else ''
                             
-                            # Only include claims with positive relief
+                            # Initialize rotation fields
+                            rot_base = ''
+                            rot_start = ''
+                            rot_number = ''
+                            
+                            # Get rotation data from case detail if relief > 0
                             if relief_minutes > 0 and case_number:
+                                try:
+                                    # Click on case number to go to detail page
+                                    case_link = cells[0].find_element(By.TAG_NAME, "a")
+                                    case_link.click()
+                                    time.sleep(2)
+                                    
+                                    # Wait for case detail page to load
+                                    wait.until(EC.presence_of_element_located((By.CLASS_NAME, "card-body")))
+                                    
+                                    # Extract rotation fields from case detail
+                                    try:
+                                        # Look for rotation fields in the case detail
+                                        # These might be in various formats, so we'll try multiple approaches
+                                        
+                                        # Method 1: Look for labeled fields
+                                        page_source = driver.page_source
+                                        
+                                        # Search for Rot. Base
+                                        import re
+                                        rot_base_match = re.search(r'Rot\.\s*Base[:\s]*([A-Za-z0-9]{1,5})', page_source, re.IGNORECASE)
+                                        if rot_base_match:
+                                            rot_base = rot_base_match.group(1).strip()
+                                        
+                                        # Search for Rot. Start
+                                        rot_start_match = re.search(r'Rot\.\s*Start[:\s]*([A-Za-z0-9]{1,5})', page_source, re.IGNORECASE)
+                                        if rot_start_match:
+                                            rot_start = rot_start_match.group(1).strip()
+                                        
+                                        # Search for Rot. # or Rot. Number
+                                        rot_number_match = re.search(r'Rot\.\s*#?[:\s]*([A-Za-z0-9]{1,5})', page_source, re.IGNORECASE)
+                                        if rot_number_match:
+                                            rot_number = rot_number_match.group(1).strip()
+                                        
+                                        # Method 2: Try to find specific form fields or table cells
+                                        try:
+                                            # Look for input fields or table cells that might contain rotation data
+                                            form_elements = driver.find_elements(By.CSS_SELECTOR, "input, td, span, div")
+                                            for element in form_elements:
+                                                element_text = element.get_attribute("value") or element.text
+                                                element_id = element.get_attribute("id") or ""
+                                                element_name = element.get_attribute("name") or ""
+                                                
+                                                # Check if this element contains rotation data
+                                                if any(keyword in (element_id + element_name).lower() for keyword in ['rot', 'rotation']):
+                                                    if 'base' in (element_id + element_name).lower() and not rot_base:
+                                                        rot_base = element_text[:5]  # Limit to 5 characters
+                                                    elif 'start' in (element_id + element_name).lower() and not rot_start:
+                                                        rot_start = element_text[:5]
+                                                    elif ('number' in (element_id + element_name).lower() or 
+                                                          element_id.lower().endswith('rot') or 
+                                                          element_name.lower().endswith('rot')) and not rot_number:
+                                                        rot_number = element_text[:5]
+                                        except:
+                                            pass  # Continue if this method fails
+                                            
+                                    except Exception as rotation_error:
+                                        # If rotation extraction fails, continue with empty values
+                                        pass
+                                    
+                                    # Navigate back to the main page
+                                    driver.back()
+                                    time.sleep(1)
+                                    
+                                    # Wait for the table to reload
+                                    wait.until(EC.presence_of_element_located((By.ID, "claimsTable")))
+                                    
+                                except Exception as detail_error:
+                                    # If clicking into detail fails, continue without rotation data
+                                    pass
+                                
                                 claims_data.append({
                                     'case_number': case_number,
                                     'pilot': pilot,
@@ -2542,7 +2625,10 @@ def scrape_sts_data():
                                     'decision_date': decision_date,
                                     'relief_minutes': relief_minutes,
                                     'relief_dollars': relief_dollars(relief_minutes),
-                                    'processing_days': processing_days
+                                    'processing_days': processing_days,
+                                    'rot_base': rot_base,
+                                    'rot_start': rot_start,
+                                    'rot_number': rot_number
                                 })
                                 page_claims += 1
                     except Exception as e:
@@ -2995,17 +3081,17 @@ python sts_totalpackage_v2_Version5_Version2.py
                 """)
                 st.info("**💡 Tip:** Enable Demo Mode above to explore the dashboard with sample data!")
             else:
-                if not st.session_state.get('data_collected', False):
-                    st.warning("⚠️ No data collected yet")
-                    if st.button("🚀 Start Data Collection", type="primary"):
-                        scrape_sts_data()
-                else:
-                    st.success("✅ Data collected successfully")
-                    df = st.session_state.get('collected_data', pd.DataFrame())
-                    st.metric("Claims Collected", len(df))
-                    
-                    if st.button("🔄 Refresh Data"):
-                        scrape_sts_data()
+                st.warning("⚠️ **Data Collection Feature Moved**")
+                st.info("""
+                **Data collection has been moved to the separate script: `generate_dashboard_data.py`**
+                
+                **To collect data:**
+                1. Run the `generate_dashboard_data.py` script separately
+                2. Upload the generated CSV file using the file uploader below
+                3. Use the dashboard to analyze your data
+                
+                **For now, enable Demo Mode to explore the dashboard features.**
+                """)
         
         st.divider()
         
