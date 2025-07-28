@@ -905,7 +905,11 @@ def generate_demo_data():
             'decision_date': decision_date.strftime('%Y-%m-%d') if decision_date else '',
             'processing_days': (decision_date - submission_date).days if decision_date else None,
             'violation_type': np.random.choice(['Type A', 'Type B', 'Type C', 'Type D']),
-            'probability_of_payment': np.random.uniform(0.1, 0.9)
+            'probability_of_payment': np.random.uniform(0.1, 0.9),
+            # Add rotation fields
+            'rot_base': np.random.choice(['CDW', 'LAX', 'JFK', 'ORD', 'DFW', 'SEA', 'DEN', 'ATL']),
+            'rot_start': f"{np.random.randint(1, 32):02d}",  # Day of month, zero-padded
+            'rot_number': str(np.random.randint(1, 6))  # Rotation number 1-5
         })
     
     return pd.DataFrame(data)
@@ -2161,7 +2165,7 @@ def show_claims_details_tab():
     # Display raw data with filters
     st.subheader("🔍 Filter Claims")
     
-    col1, col2, col3 = st.columns(3)
+    col1, col2, col3, col4 = st.columns(4)
     
     with col1:
         status_filter = st.selectbox("Filter by Status", 
@@ -2174,6 +2178,18 @@ def show_claims_details_tab():
     with col3:
         min_relief = st.number_input("Minimum Relief Amount", value=0.0, step=100.0)
     
+    with col4:
+        # Add rotation base filter if the column exists
+        if 'rot_base' in df.columns:
+            rotation_bases = df['rot_base'].dropna().unique()
+            if len(rotation_bases) > 0:
+                rot_base_filter = st.selectbox("Filter by Rotation Base", 
+                                             options=['All'] + list(rotation_bases))
+            else:
+                rot_base_filter = 'All'
+        else:
+            rot_base_filter = 'All'
+    
     # Apply filters
     filtered_df = df.copy()
     
@@ -2183,6 +2199,9 @@ def show_claims_details_tab():
     if pilot_filter != 'All':
         filtered_df = filtered_df[filtered_df['pilot'] == pilot_filter]
     
+    if rot_base_filter != 'All' and 'rot_base' in filtered_df.columns:
+        filtered_df = filtered_df[filtered_df['rot_base'] == rot_base_filter]
+    
     filtered_df = filtered_df[filtered_df['relief_dollars'] >= min_relief]
     
     # Add HH:MM format to display if not already present
@@ -2191,12 +2210,24 @@ def show_claims_details_tab():
     
     st.write(f"Showing {len(filtered_df)} of {len(df)} claims")
     
-    # Reorder columns to show HH:MM prominently
+    # Reorder columns to show important fields prominently
     display_columns = ['case_number', 'pilot', 'subject', 'status']
+    
+    # Add rotation fields if they exist
+    if 'rot_base' in filtered_df.columns:
+        display_columns.append('rot_base')
+    if 'rot_start' in filtered_df.columns:
+        display_columns.append('rot_start')  
+    if 'rot_number' in filtered_df.columns:
+        display_columns.append('rot_number')
+    
+    # Add relief fields
     if 'relief_hhmm' in filtered_df.columns:
         display_columns.append('relief_hhmm')
     if 'relief_dollars' in filtered_df.columns:
         display_columns.append('relief_dollars')
+    
+    # Add any remaining columns
     display_columns.extend([col for col in filtered_df.columns if col not in display_columns])
     
     # Format relief_dollars for display
@@ -2761,7 +2792,7 @@ def main():
                     
                     # Validate columns
                     required_cols = ['case_number', 'pilot', 'subject', 'status']
-                    optional_cols = ['relief_minutes', 'relief_dollars', 'relief_requested', 'submission_date']
+                    optional_cols = ['relief_minutes', 'relief_dollars', 'relief_requested', 'submission_date', 'rot_base', 'rot_start', 'rot_number']
                     
                     missing_required = [col for col in required_cols if col not in df_upload.columns]
                     available_optional = [col for col in optional_cols if col in df_upload.columns]
@@ -2838,6 +2869,16 @@ def main():
                 with col4:
                     sub_date = st.date_input("Submission Date", value=datetime.now().date())
                 
+                # Rotation fields (optional)
+                st.markdown("**Rotation Information (Optional):**")
+                col5, col6, col7 = st.columns(3)
+                with col5:
+                    rot_base = st.text_input("Rotation Base", placeholder="e.g., CDW, LAX, JFK")
+                with col6:
+                    rot_start = st.text_input("Rotation Start", placeholder="e.g., 01, 02, 03")
+                with col7:
+                    rot_number = st.text_input("Rotation Number", placeholder="e.g., 1, 2, 3")
+                
                 submitted = st.form_submit_button("➕ Add Record", type="primary")
                 
                 if submitted:
@@ -2849,9 +2890,17 @@ def main():
                             'subject': violation,
                             'status': status,
                             'relief_minutes': relief_minutes,
-                            'relief_dollars': relief_hrs * relief_rate,
+                            'relief_dollars': relief_minutes * relief_rate / 60,
                             'submission_date': sub_date.strftime('%Y-%m-%d')
                         }
+                        
+                        # Add rotation fields if provided
+                        if rot_base:
+                            new_record['rot_base'] = rot_base
+                        if rot_start:
+                            new_record['rot_start'] = rot_start
+                        if rot_number:
+                            new_record['rot_number'] = rot_number
                         
                         # Initialize or append to manual data
                         if 'manual_records' not in st.session_state:
@@ -2955,7 +3004,10 @@ python sts_totalpackage_v2_Version5_Version2.py
                 'relief_requested': ['02:00', '01:00', '03:00'],  # HH:MM format
                 'relief_minutes': [120, 60, 180],  # Optional - will be calculated if missing
                 'relief_dollars': [640.94, 320.47, 961.41],  # Optional - will be calculated if missing
-                'submission_date': ['2025-01-15', '2025-01-16', '2025-01-17']
+                'submission_date': ['2025-01-15', '2025-01-16', '2025-01-17'],
+                'rot_base': ['CDW', 'LAX', 'JFK'],  # Rotation base - optional
+                'rot_start': ['01', '02', '03'],    # Rotation start - optional
+                'rot_number': ['1', '2', '3']       # Rotation number - optional
             }
             template_df = pd.DataFrame(template_data)
             
@@ -2965,7 +3017,7 @@ python sts_totalpackage_v2_Version5_Version2.py
                 data=csv_template,
                 file_name="sts_claims_template.csv",
                 mime="text/csv",
-                help="Template shows relief_requested in HH:MM format. Dashboard will auto-calculate minutes/dollars if missing."
+                help="Template includes rotation fields (rot_base, rot_start, rot_number) and relief_requested in HH:MM format. Dashboard will auto-calculate missing fields."
             )
         
         st.divider()
