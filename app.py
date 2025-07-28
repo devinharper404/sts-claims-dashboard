@@ -2969,7 +2969,7 @@ def main():
         return
     
     # Header
-    st.markdown('<h1 class="main-header">✈️ STS Claims Analytics Dashboard</h1>', unsafe_allow_html=True)
+    st.markdown('<h1 class="main-header">STS Claims Analytics Dashboard</h1>', unsafe_allow_html=True)
     
     # Sidebar controls
     with st.sidebar:
