@@ -2930,6 +2930,7 @@ def scrape_sts_data():
             # Store in session state
             st.session_state.collected_data = df
             st.session_state.data_collected = True
+            st.session_state.last_updated = datetime.now()  # Track collection timestamp
             st.session_state.collection_status['export_file'] = filename
             
             st.success(f"✅ Data collection completed successfully!")
@@ -2971,6 +2972,45 @@ def main():
     # Header
     st.markdown('<h1 class="main-header">✈️ STS Claims Analytics Dashboard</h1>', unsafe_allow_html=True)
     
+    # Last Updated Banner
+    if 'last_updated' in st.session_state and st.session_state.get('data_collected', False):
+        last_updated = st.session_state['last_updated']
+        data_source = st.session_state.get('data_source', 'unknown')
+        
+        # Format the timestamp
+        formatted_time = last_updated.strftime("%B %d, %Y at %I:%M %p")
+        
+        # Create banner with different colors based on data source
+        if data_source == 'uploaded':
+            source_icon = "📄"
+            source_text = "CSV Upload"
+            banner_color = "#E8F5E8"  # Light green
+        elif data_source == 'manual':
+            source_icon = "✏️"
+            source_text = "Manual Entry"
+            banner_color = "#E8F4FD"  # Light blue
+        else:
+            source_icon = "🔗"
+            source_text = "Data Collection"
+            banner_color = "#FFF8E1"  # Light yellow
+        
+        st.markdown(f"""
+        <div style="
+            background-color: {banner_color}; 
+            padding: 10px 15px; 
+            border-radius: 5px; 
+            border-left: 4px solid #2E8B57;
+            margin: 10px 0px;
+            display: flex;
+            align-items: center;
+            font-size: 14px;
+        ">
+            <span style="margin-right: 8px;">{source_icon}</span>
+            <strong>Last Updated:</strong>&nbsp;{formatted_time}&nbsp;&nbsp;|&nbsp;&nbsp;
+            <strong>Source:</strong>&nbsp;{source_text}
+        </div>
+        """, unsafe_allow_html=True)
+    
     # Sidebar controls
     with st.sidebar:
         st.header("🎛️ Dashboard Controls")
@@ -2988,6 +3028,38 @@ def main():
                 st.rerun()
         else:
             st.info("🔴 **Production Mode**\n\nReady for live data collection.")
+        
+        # Data Status Section
+        st.divider()
+        st.subheader("📊 Data Status")
+        
+        if st.session_state.get('data_collected', False) and 'last_updated' in st.session_state:
+            last_updated = st.session_state['last_updated']
+            data_source = st.session_state.get('data_source', 'unknown')
+            time_ago = datetime.now() - last_updated
+            
+            # Calculate time ago
+            if time_ago.days > 0:
+                time_str = f"{time_ago.days} day(s) ago"
+            elif time_ago.seconds > 3600:
+                hours = time_ago.seconds // 3600
+                time_str = f"{hours} hour(s) ago"
+            elif time_ago.seconds > 60:
+                minutes = time_ago.seconds // 60
+                time_str = f"{minutes} minute(s) ago"
+            else:
+                time_str = "Just now"
+            
+            # Get data count
+            df = get_data()
+            record_count = len(df) if not df.empty else 0
+            
+            st.metric("📊 Records Loaded", f"{record_count:,}")
+            st.metric("⏰ Last Updated", time_str)
+            st.metric("📁 Data Source", data_source.title())
+        else:
+            st.warning("⚠️ No data loaded")
+            st.write("Upload a CSV file or enable Demo Mode to begin.")
         
         st.divider()
         
@@ -3111,6 +3183,7 @@ def main():
                             st.session_state['uploaded_data'] = df_upload
                             st.session_state['data_source'] = 'uploaded'
                             st.session_state['data_collected'] = True
+                            st.session_state['last_updated'] = datetime.now()  # Track upload timestamp
                             
                             # Save to file for persistence
                             df_upload.to_csv('uploaded_claims_data.csv', index=False)
@@ -3176,6 +3249,7 @@ def main():
                             st.session_state['uploaded_data'] = manual_df
                             st.session_state['data_source'] = 'manual'
                             st.session_state['data_collected'] = True
+                            st.session_state['last_updated'] = datetime.now()  # Track manual entry timestamp
                             manual_df.to_csv('manual_claims_data.csv', index=False)
                         
                         st.success(f"✅ Record added! Total records: {len(st.session_state['manual_records'])}")
