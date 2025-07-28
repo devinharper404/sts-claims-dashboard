@@ -4458,70 +4458,93 @@ def show_impasse_analysis_tab():
         
         # ===== TRENDS OVER TIME =====
         with st.expander("📈 Impasse Trends Over Time", expanded=True):
-            if 'date_submitted' in impasse_df.columns:
+            # Check for various possible date column names
+            date_columns = ['date_submitted', 'submission_date', 'created_date', 'date_created', 'date']
+            available_date_col = None
+            
+            for col in date_columns:
+                if col in impasse_df.columns:
+                    available_date_col = col
+                    break
+            
+            if available_date_col and len(impasse_df) > 0:
                 st.subheader("Time-Based Analysis")
                 
-                # Convert date_submitted to datetime
-                impasse_df['date_submitted'] = pd.to_datetime(impasse_df['date_submitted'], errors='coerce')
+                # Convert date column to datetime
+                impasse_df[available_date_col] = pd.to_datetime(impasse_df[available_date_col], errors='coerce')
                 
-                # Group by month-year
-                impasse_df['month_year'] = impasse_df['date_submitted'].dt.to_period('M')
+                # Check if we have valid dates after conversion
+                valid_dates = impasse_df[available_date_col].dropna()
                 
-                # Create aggregation dict based on available columns
-                agg_dict = {'case_number': 'count'}
-                if 'relief_minutes' in impasse_df.columns:
-                    agg_dict['relief_minutes'] = 'sum'
-                
-                monthly_impasse = impasse_df.groupby('month_year').agg(agg_dict).reset_index()
-                
-                monthly_impasse['month_year_str'] = monthly_impasse['month_year'].astype(str)
-                
-                # Add relief_dollars if relief_minutes exists
-                if 'relief_minutes' in monthly_impasse.columns:
-                    monthly_impasse['relief_dollars'] = monthly_impasse['relief_minutes'] * relief_rate / 60
+                if len(valid_dates) > 0:
+                    # Group by month-year
+                    impasse_df['month_year'] = impasse_df[available_date_col].dt.to_period('M')
+                    
+                    # Create aggregation dict based on available columns
+                    agg_dict = {'case_number': 'count'}
+                    if 'relief_minutes' in impasse_df.columns:
+                        agg_dict['relief_minutes'] = 'sum'
+                    
+                    monthly_impasse = impasse_df.groupby('month_year').agg(agg_dict).reset_index()
+                    
+                    monthly_impasse['month_year_str'] = monthly_impasse['month_year'].astype(str)
+                    
+                    # Add relief_dollars if relief_minutes exists
+                    if 'relief_minutes' in monthly_impasse.columns:
+                        monthly_impasse['relief_dollars'] = monthly_impasse['relief_minutes'] * relief_rate / 60
+                    else:
+                        monthly_impasse['relief_dollars'] = 0
+                    
+                    # Also calculate overall monthly submission rates for comparison
+                    df_with_groups[available_date_col] = pd.to_datetime(df_with_groups[available_date_col], errors='coerce')
+                    df_with_groups['month_year'] = df_with_groups[available_date_col].dt.to_period('M')
+                    monthly_total = df_with_groups.groupby('month_year').size().reset_index(name='total_cases')
+                    monthly_total['month_year_str'] = monthly_total['month_year'].astype(str)
+                    
+                    # Merge for impasse rate calculation
+                    monthly_trends = pd.merge(monthly_total, monthly_impasse, on='month_year_str', how='left')
+                    monthly_trends['case_number'] = monthly_trends['case_number'].fillna(0)
+                    monthly_trends['impasse_rate'] = (monthly_trends['case_number'] / monthly_trends['total_cases'] * 100).round(1)
+                    
+                    if len(monthly_impasse) > 0:
+                        col1, col2 = st.columns(2)
+                        
+                        with col1:
+                            # Monthly impasse case count
+                            fig = px.line(monthly_impasse, x='month_year_str', y='case_number',
+                                        title="Monthly Impasse Cases",
+                                        labels={'case_number': 'Number of Cases', 'month_year_str': 'Month'})
+                            fig.update_xaxes(tickangle=45)
+                            st.plotly_chart(fig, use_container_width=True)
+                        
+                        with col2:
+                            # Monthly impasse rate
+                            fig = px.line(monthly_trends, x='month_year_str', y='impasse_rate',
+                                        title="Monthly Impasse Rate (%)",
+                                        labels={'impasse_rate': 'Impasse Rate (%)', 'month_year_str': 'Month'})
+                            fig.update_xaxes(tickangle=45)
+                            st.plotly_chart(fig, use_container_width=True)
+                        
+                        # Relief trends (only show if relief data is available)
+                        if 'relief_dollars' in monthly_impasse.columns and monthly_impasse['relief_dollars'].sum() > 0:
+                            st.subheader("Relief Value Trends")
+                            fig = px.line(monthly_impasse, x='month_year_str', y='relief_dollars',
+                                        title="Monthly Impasse Relief Value",
+                                        labels={'relief_dollars': 'Relief Value ($)', 'month_year_str': 'Month'})
+                            fig.update_xaxes(tickangle=45)
+                            fig.update_yaxes(tickformat="$,.0f")
+                            st.plotly_chart(fig, use_container_width=True)
+                    else:
+                        st.info("No data points available for trend visualization.")
                 else:
-                    monthly_impasse['relief_dollars'] = 0
-                
-                # Also calculate overall monthly submission rates for comparison
-                df_with_groups['date_submitted'] = pd.to_datetime(df_with_groups['date_submitted'], errors='coerce')
-                df_with_groups['month_year'] = df_with_groups['date_submitted'].dt.to_period('M')
-                monthly_total = df_with_groups.groupby('month_year').size().reset_index(name='total_cases')
-                monthly_total['month_year_str'] = monthly_total['month_year'].astype(str)
-                
-                # Merge for impasse rate calculation
-                monthly_trends = pd.merge(monthly_total, monthly_impasse, on='month_year_str', how='left')
-                monthly_trends['case_number'] = monthly_trends['case_number'].fillna(0)
-                monthly_trends['impasse_rate'] = (monthly_trends['case_number'] / monthly_trends['total_cases'] * 100).round(1)
-                
-                col1, col2 = st.columns(2)
-                
-                with col1:
-                    # Monthly impasse case count
-                    fig = px.line(monthly_impasse, x='month_year_str', y='case_number',
-                                title="Monthly Impasse Cases",
-                                labels={'case_number': 'Number of Cases', 'month_year_str': 'Month'})
-                    fig.update_xaxes(tickangle=45)
-                    st.plotly_chart(fig, use_container_width=True)
-                
-                with col2:
-                    # Monthly impasse rate
-                    fig = px.line(monthly_trends, x='month_year_str', y='impasse_rate',
-                                title="Monthly Impasse Rate (%)",
-                                labels={'impasse_rate': 'Impasse Rate (%)', 'month_year_str': 'Month'})
-                    fig.update_xaxes(tickangle=45)
-                    st.plotly_chart(fig, use_container_width=True)
-                
-                # Relief trends (only show if relief data is available)
-                if 'relief_dollars' in monthly_impasse.columns and monthly_impasse['relief_dollars'].sum() > 0:
-                    st.subheader("Relief Value Trends")
-                    fig = px.line(monthly_impasse, x='month_year_str', y='relief_dollars',
-                                title="Monthly Impasse Relief Value",
-                                labels={'relief_dollars': 'Relief Value ($)', 'month_year_str': 'Month'})
-                    fig.update_xaxes(tickangle=45)
-                    fig.update_yaxes(tickformat="$,.0f")
-                    st.plotly_chart(fig, use_container_width=True)
+                    st.info("Date column found but contains no valid dates for trend analysis.")
             else:
-                st.info("Date information not available for trend analysis.")
+                # Only show this section if there are actually impasse cases
+                if len(impasse_df) > 0:
+                    st.info(f"📅 Date information not available for trend analysis. Available columns: {', '.join(impasse_df.columns.tolist())}")
+                    st.markdown("*Trend analysis requires a date column (date_submitted, submission_date, created_date, date_created, or date)*")
+                else:
+                    st.success("✅ No impasse cases found - trend analysis not needed!")
         
         # ===== IMPASSE RATES BY SUBJECT =====
         with st.expander("🎯 Impasse Rates by Subject", expanded=True):
